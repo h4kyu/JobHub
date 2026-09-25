@@ -1,0 +1,128 @@
+"""Where every job currently sits in the pipeline, and what (if anything) is holding jobs back.
+
+Backs the web UI's Pipeline page. Pure reads: each stage reports counts, the knobs that govern it, and a list of
+`limits` — concrete reasons some jobs are not ingested / scored / refined right now, each with the setting or action
+that lifts it. Nothing here is hidden in a log: if a cap is leaving jobs on a coarser score, it shows up here.
+"""
+from __future__ import annotations
+
+import json
+import sqlite3
+from typing import Any
+
+from . import config, db, fastscore
+
+POLLABLE = ("greenhouse", "lever", "ashby", "workday")
+
+
+def _q(conn: sqlite3.Connection, sql: str, *params: Any) -> int:
+    return int(conn.execute(sql, params).fetchone()[0] or 0)
+
+
+def funnel(conn: sqlite3.Connection, phash: str) -> dict[str, int]:
+    """Every active job counted once, by the latest evaluation it has under the current profile."""
+    rows = conn.execute(
+        """SELECT CASE WHEN e.id IS NULL THEN 'unscored'
+                       WHEN e.model = 'prefilter' THEN 'rules'
+                       WHEN e.model = 'triage' THEN 'triage'
+                       WHEN e.model = 'local' THEN 'local_' || COALESCE(json_extract(e.raw, '$.fast.band'), 'no')
+                       ELSE 'deep' END k, COUNT(*) n
+           FROM jobs j LEFT JOIN evaluations e ON e.job_id = j.id AND e.profile_hash = ?
+                AND e.id = (SELECT MAX(e2.id) FROM evaluations e2 WHERE e2.job_id = j.id AND e2.profile_hash = ?)
+           WHERE j.active = 1 GROUP BY 1""", (phash, phash)).fetchall()
+    out = {"unscored": 0, "rules": 0, "local_no": 0, "local_ambiguous": 0, "local_yes": 0, "triage": 0, "deep": 0}
+    for r in rows:
+        out[r["k"]] = out.get(r["k"], 0) + r["n"]
+    return out
+
+
+def pipeline_status(conn: sqlite3.Connection) -> dict[str, Any]:
+    profile = config.load_profile()
+    llm, fs = profile.llm, profile.fast_scoring
+    phash = config.profile_hash()
+    give_up = db.FETCH_GIVE_UP
+
+    # ---- stage 0/1: sources and ingest
+    repos = {r["status"]: r["n"] for r in conn.execute("SELECT status, COUNT(*) n FROM repo_sources GROUP BY status")}
+    companies = {r["status"]: r["n"] for r in conn.execute("SELECT status, COUNT(*) n FROM companies GROUP BY status")}
+    polled = _q(conn, "SELECT COUNT(*) FROM companies WHERE status = 'approved' AND ats_token IS NOT NULL AND ats_type IN (%s)"
+                % ",".join("?" * len(POLLABLE)), *POLLABLE)
+    approved_no_board = companies.get("approved", 0) - polled
+    proposed_no_board = _q(conn, "SELECT COUNT(*) FROM companies WHERE status = 'proposed' AND ats_token IS NULL")
+    last_ingest = conn.execute("SELECT * FROM runs WHERE kind IN ('ingest', 'run') ORDER BY id DESC LIMIT 1").fetchone()
+    active = _q(conn, "SELECT COUNT(*) FROM jobs WHERE active = 1")
+    desc = {
+        "text": _q(conn, "SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text IS NOT NULL AND description_text != ''"),
+        "never": _q(conn, "SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text = ''"),
+        "pending_fetch": _q(conn, f"SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text IS NULL "
+                                  f"AND COALESCE(json_extract(raw, '$.fetch_failures'), 0) < {give_up}"),
+        "unreadable": _q(conn, f"SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text IS NULL "
+                               f"AND COALESCE(json_extract(raw, '$.fetch_failures'), 0) >= {give_up}"),
+    }
+
+    # ---- stage 2: prefilter
+    reasons = conn.execute(
+        """SELECT hard_reject_reason r, COUNT(*) n FROM evaluations e JOIN jobs j ON j.id = e.job_id
+           WHERE e.profile_hash = ? AND e.model = 'prefilter' AND j.active = 1 GROUP BY 1 ORDER BY 2 DESC LIMIT 8""", (phash,)).fetchall()
+
+    # ---- stage 3/4: local score + refinement
+    fun = funnel(conn, phash)
+    awaiting = fastscore.count_ambiguous(conn, phash)
+    last_score = db.uj(db.get_meta(conn, "last_score"), {}) or {}
+    week = db.tokens_used_since(conn, 7)
+    unread_rows = _q(conn, """SELECT COUNT(*) FROM evaluations e JOIN jobs j ON j.id = e.job_id WHERE e.profile_hash = ?
+                              AND e.model IN ('local', 'triage') AND j.active = 1 AND json_extract(e.raw, '$.description_unavailable') = 1""", phash)
+    deep = _q(conn, "SELECT COUNT(DISTINCT job_id) FROM evaluations WHERE profile_hash = ? AND hard_reject_reason IS NULL "
+                    "AND model NOT IN ('prefilter', 'local', 'triage')", phash)
+
+    # ---- stage 6: what the user sees
+    buckets = {r["bucket"]: r["n"] for r in conn.execute(
+        """SELECT e.bucket, COUNT(*) n FROM evaluations e JOIN jobs j ON j.id = e.job_id
+           WHERE e.profile_hash = ? AND j.active = 1
+             AND e.id = (SELECT MAX(e2.id) FROM evaluations e2 WHERE e2.job_id = j.id AND e2.profile_hash = ?) GROUP BY 1""", (phash, phash))}
+
+    pending_score = db.count_pending_fast(conn, phash)
+    limits: list[dict[str, Any]] = []
+
+    def limit(level: str, stage: str, text: str, action: str, **kw: Any) -> None:
+        limits.append({"level": level, "stage": stage, "text": text, "action": action, **kw})
+
+    if approved_no_board or proposed_no_board:
+        limit("info", "sources", f"{approved_no_board} approved and {proposed_no_board} proposed companies have no job feed we can read, "
+              "so their own postings are only seen if an aggregator list carries them.",
+              "Resolve feeds (free), or check the Blind spots page for the ones nothing reaches us from.", link="blindspots", kind="resolve")
+    if desc["pending_fetch"]:
+        limit("warn", "ingest", f"{desc['pending_fetch']} postings are waiting for their description to be fetched.",
+              "Run Ingest (no fetch limit).", kind="ingest")
+    if desc["unreadable"]:
+        limit("info", "ingest", f"{desc['unreadable']} postings could not be read after {give_up} attempts (the site blocks scraping); "
+              "they are scored from title and company only and tagged 'check manually'.", "Retry the fetch, or open them by hand.", kind="retry")
+    if pending_score:
+        limit("warn", "score", f"{pending_score} readable postings have no score yet.", "Run Score (free, local).", kind="score")
+    if awaiting:
+        reason = last_score.get("reason") or "not yet refined"
+        limit("warn", "triage", f"{awaiting} ambiguous postings are showing their local score only ({reason}).",
+              "Refine them now, or raise llm.run_token_budget / set it to 0.", kind="refine")
+    if llm.weekly_token_budget and week >= llm.weekly_token_budget:
+        limit("warn", "triage", f"The weekly token cap ({llm.weekly_token_budget:,}) is used up, so no ambiguous posting is refined.",
+              "Raise or clear llm.weekly_token_budget (0 = off).")
+    if not llm.triage_enabled:
+        limit("info", "triage", "llm.triage_enabled is off: ambiguous postings are never refined by a model.", "Set llm.triage_enabled: true.")
+
+    return {
+        "phash": phash,
+        "sources": {"repos": repos, "companies": companies, "polled": polled, "approved_no_board": approved_no_board,
+                    "proposed_no_board": proposed_no_board,
+                    "last_ingest": dict(last_ingest) if last_ingest else None},
+        "ingest": {"active": active, "desc": desc},
+        "prefilter": {"count": fun["rules"], "reasons": [(r["r"], r["n"]) for r in reasons]},
+        "score": {"pending": pending_score, "no": fun["local_no"], "ambiguous": fun["local_ambiguous"], "yes": fun["local_yes"],
+                  "unread": unread_rows, "hi": fs.hi, "lo": fs.lo},
+        "triage": {"awaiting": awaiting, "done": fun["triage"], "enabled": llm.triage_enabled, "run_cap": llm.run_token_budget,
+                   "weekly_cap": llm.weekly_token_budget, "week_used": week, "last": last_score,
+                   "batch": llm.triage_batch_size, "min_score": llm.triage_min_score, "model": llm.triage_model},
+        "deep": {"count": deep},
+        "output": {"buckets": buckets},
+        "funnel": fun,
+        "limits": limits,
+    }

@@ -1,0 +1,140 @@
+# Manually curated watchlist. Synced into the database on every `jobhub ingest` as approved companies.
+# `ats` is <type>:<board token> (greenhouse | lever | ashby). Boards below were verified live on 2026-08-28.
+# Companies without `ats` are listed for reputation credit (tier feeds desirability) — their postings arrive via aggregators.
+# tier: 1 = top, 2 = strong, 3 = fine
+companies:
+  # --- quant / trading (deep C++) ---
+  - {name: Jane Street,            ats: greenhouse:janestreet,            tier: 1, notes: "Board lists no internships; Jan-Apr co-op arrives via aggregators"}
+  - {name: Hudson River Trading,   tier: 1, notes: "Custom careers site; no public board found"}
+  - {name: Citadel,                tier: 1, notes: "Custom portal"}
+  - {name: Two Sigma,              tier: 1, notes: "Custom portal"}
+  - {name: IMC Trading,            ats: greenhouse:imc,                   tier: 1}
+  - {name: DRW,                    ats: greenhouse:drweng,                tier: 1}
+  - {name: Jump Trading,           ats: greenhouse:jumptrading,           tier: 1}
+  - {name: Five Rings,             tier: 1, notes: "Custom portal"}
+  - {name: Optiver,                tier: 1, notes: "Greenhouse board empty; custom portal"}
+  - {name: Susquehanna (SIG),      tier: 1, notes: "iCIMS portal"}
+  - {name: Akuna Capital,          ats: greenhouse:akunacapital,          tier: 2}
+  - {name: Tower Research,         ats: greenhouse:towerresearchcapital,  tier: 2}
+  - {name: Virtu Financial,        ats: greenhouse:virtu,                 tier: 2}
+  # --- robotics / autonomy / defence ---
+  - {name: Anduril,                ats: greenhouse:andurilindustries,     tier: 1}
+  - {name: Applied Intuition,      ats: ashby:applied,                    tier: 1}
+  - {name: Figure,                 ats: greenhouse:figureai,              tier: 1}
+  - {name: Neuralink,              ats: greenhouse:neuralink,             tier: 1}
+  - {name: Physical Intelligence,  ats: ashby:physicalintelligence,       tier: 1}
+  - {name: Boston Dynamics,        tier: 1, notes: "Custom portal"}
+  - {name: Waymo,                  tier: 1, notes: "Custom portal"}
+  - {name: Skydio,                 ats: ashby:skydio,                     tier: 2}
+  - {name: Zipline,                ats: greenhouse:flyzipline,            tier: 2}
+  - {name: Nuro,                   ats: greenhouse:nuro,                  tier: 2}
+  - {name: Shield AI,              ats: lever:shieldai,                   tier: 2}
+  - {name: Kodiak,                 ats: greenhouse:kodiak,                tier: 2}
+  - {name: Waabi,                  ats: lever:waabi,                      tier: 2}
+  - {name: Apptronik,              ats: greenhouse:apptronik,             tier: 2}
+  - {name: Agility Robotics,       ats: greenhouse:agilityrobotics,       tier: 2}
+  - {name: Helsing,                ats: greenhouse:helsing,               tier: 2}
+  - {name: Aurora,                 tier: 2, notes: "Custom portal"}
+  - {name: Epirus,                 ats: greenhouse:epirus,                tier: 3}
+  # --- GPU / accelerators / systems ---
+  - {name: NVIDIA,                 tier: 1, notes: "Workday; arrives via aggregators"}
+  - {name: Tesla,                  tier: 1, notes: "Site blocks scraping; postings are evaluated unread — check manually"}
+  - {name: AMD,                    tier: 1, notes: "JS careers site; often unread"}
+  - {name: Tenstorrent,            ats: greenhouse:tenstorrent,           tier: 2}
+  - {name: Cerebras,               ats: ashby:cerebras,                   tier: 1}
+  - {name: Groq,                   tier: 2, notes: "Custom portal"}
+  - {name: Modular,                tier: 2, notes: "Custom portal"}
+  - {name: Databricks,             ats: greenhouse:databricks,            tier: 1}
+  - {name: Cloudflare,             ats: greenhouse:cloudflare,            tier: 2}
+  - {name: Roblox,                 ats: greenhouse:roblox,                tier: 2}
+  # --- big names (reputation credit for aggregator/unread postings) ---
+  - {name: Amazon,                 tier: 1}
+  - {name: Microsoft,              tier: 1}
+  - {name: Google,                 tier: 1}
+  - {name: Apple,                  tier: 1}
+  - {name: Meta,                   tier: 1}
+  - {name: Palantir,               tier: 1}
+
+  # === Added 2026-09-03: large-company breadth sweep. Boards resolved by deterministic
+  # === slug probing (greenhouse/lever/ashby), zero model tokens. Filtering is done by the
+  # === prefilter + rubric, so breadth here is cheap: a board with no matching roles costs one HTTP call.
+  # --- semis / accelerators ---
+  - {name: Astera Labs,               ats: greenhouse:asteralabs,                 tier: 1}
+  # --- cloud / data / infra ---
+  - {name: Anyscale,                  ats: lever:anyscale,                        tier: 2}
+  - {name: ClickHouse,                ats: ashby:clickhouse,                      tier: 1}
+  - {name: Cockroach Labs,            ats: greenhouse:cockroachlabs,              tier: 2}
+  - {name: Confluent,                 ats: ashby:confluent,                       tier: 1}
+  - {name: Elastic,                   ats: greenhouse:elastic,                    tier: 2}
+  - {name: Fastly,                    ats: greenhouse:fastly,                     tier: 2}
+  - {name: Modal,                     ats: ashby:modal,                           tier: 2}
+  - {name: MongoDB,                   ats: greenhouse:mongodb,                    tier: 1}
+  - {name: Neon,                      ats: lever:neon,                            tier: 2}
+  - {name: Pure Storage,              ats: greenhouse:purestorage,                tier: 2}
+  - {name: Redis,                     ats: ashby:redis,                           tier: 2}
+  - {name: Sentry,                    ats: ashby:sentry,                          tier: 2}
+  - {name: SingleStore,               ats: greenhouse:singlestore,                tier: 2}
+  - {name: Snowflake,                 ats: ashby:snowflake,                       tier: 1}
+  - {name: Supabase,                  ats: ashby:supabase,                        tier: 2}
+  - {name: Temporal,                  ats: ashby:temporal,                        tier: 2}
+  - {name: VAST Data,                 ats: greenhouse:vast,                       tier: 2}
+  - {name: Vercel,                    ats: greenhouse:vercel,                     tier: 2}
+  # --- AI labs / ML infra ---
+  - {name: Fireworks AI,              ats: ashby:fireworks,                       tier: 2}
+  - {name: Luma AI,                   ats: ashby:lumaai,                          tier: 2}
+  - {name: Mistral AI,                ats: lever:mistral,                         tier: 1}
+  - {name: OpenAI,                    ats: ashby:openai,                          tier: 1}
+  - {name: Perplexity,                ats: ashby:perplexity,                      tier: 1}
+  - {name: Reflection AI,             ats: ashby:reflectionai,                    tier: 1}
+  - {name: Runway,                    ats: ashby:runway,                          tier: 2}
+  - {name: Scale AI,                  ats: greenhouse:scaleai,                    tier: 1}
+  - {name: Thinking Machines,         ats: ashby:thinkingmachines,                tier: 1}
+  # --- big tech / product ---
+  - {name: Airbnb,                    ats: greenhouse:airbnb,                     tier: 1}
+  - {name: Block,                     ats: greenhouse:block,                      tier: 2}
+  - {name: Brex,                      ats: greenhouse:brex,                       tier: 3}
+  - {name: Coinbase,                  ats: greenhouse:coinbase,                   tier: 1}
+  - {name: Databento,                 ats: greenhouse:databento,                  tier: 1}
+  - {name: Discord,                   ats: greenhouse:discord,                    tier: 3}
+  - {name: Dropbox,                   ats: greenhouse:dropbox,                    tier: 2}
+  - {name: Instacart,                 ats: greenhouse:instacart,                  tier: 3}
+  - {name: Linear,                    ats: ashby:linear,                          tier: 2}
+  - {name: Lyft,                      ats: greenhouse:lyft,                       tier: 2}
+  - {name: Okta,                      ats: greenhouse:okta,                       tier: 2}
+  - {name: Pinterest,                 ats: greenhouse:pinterest,                  tier: 3}
+  - {name: Plaid,                     ats: ashby:plaid,                           tier: 2}
+  - {name: Reddit,                    ats: greenhouse:reddit,                     tier: 3}
+  - {name: Robinhood,                 ats: greenhouse:robinhood,                  tier: 2}
+  - {name: Samsara,                   ats: greenhouse:samsara,                    tier: 3}
+  - {name: Spotify,                   ats: lever:spotify,                         tier: 3}
+  - {name: Stripe,                    ats: greenhouse:stripe,                     tier: 1}
+  - {name: Twilio,                    ats: greenhouse:twilio,                     tier: 2}
+  - {name: Zscaler,                   ats: greenhouse:zscaler,                    tier: 2}
+  # --- robotics / autonomy / aero ---
+  - {name: Astranis,                  ats: greenhouse:astranis,                   tier: 2}
+  - {name: Kodiak Robotics,           ats: greenhouse:kodiak,                     tier: 2}
+  - {name: Nominal,                   ats: lever:nominal,                         tier: 2}
+  - {name: Planet Labs,               ats: ashby:planet,                          tier: 1}
+  - {name: Relativity Space,          ats: greenhouse:relativity,                 tier: 2}
+  - {name: Rocket Lab,                ats: greenhouse:rocketlab,                  tier: 1}
+  - {name: Saronic,                   ats: ashby:saronic,                         tier: 1}
+  - {name: Wayve,                     ats: greenhouse:wayve,                      tier: 1}
+  # --- energy / physics / bio ---
+  - {name: Benchling,                 ats: ashby:benchling,                       tier: 3}
+  - {name: Colossal Biosciences,      ats: greenhouse:colossalbiosciences,        tier: 3}
+  - {name: Form Energy,               ats: ashby:formenergy,                      tier: 3}
+  - {name: Ginkgo Bioworks,           ats: greenhouse:ginkgobioworks,             tier: 3}
+  - {name: Helion Energy,             ats: ashby:helion,                          tier: 1}
+  - {name: Insitro,                   ats: ashby:insitro,                         tier: 3}
+  - {name: Radiant Nuclear,           ats: ashby:radiant,                         tier: 3}
+  - {name: Redwood Materials,         ats: greenhouse:redwoodmaterials,           tier: 3}
+
+  # --- Workday boards (tenant/wd/site; see sources/workday.py). Not complete listings: the
+  # --- endpoint is searched, not enumerated, so absent jobs are never marked inactive.
+  - {name: Broadcom,                  ats: workday:broadcom/wd1/External_Career,  tier: 1}
+  - {name: Cadence,                   ats: workday:cadence/wd1/External_Careers,  tier: 2}
+  - {name: GlobalFoundries,           ats: workday:globalfoundries/wd1/External,  tier: 2}
+  - {name: Intel,                     ats: workday:intel/wd1/External,            tier: 1}
+  - {name: KLA,                       ats: workday:kla/wd1/Search,                tier: 2}
+  - {name: NXP,                       ats: workday:nxp/wd3/Careers,               tier: 2}
+  - {name: Salesforce,                ats: workday:salesforce/wd12/External_Career_Site, tier: 1}

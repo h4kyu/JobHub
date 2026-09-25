@@ -1,0 +1,21 @@
+{
+  "type": "object",
+  "properties": {
+    "summary": { "type": "string" },
+    "plan": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "skill": { "type": "string" },
+          "why": { "type": "string" },
+          "starting_point": { "type": "string" },
+          "project": { "type": "string" },
+          "effort_weeks": { "type": "integer", "minimum": 1, "maximum": 52 }
+        },
+        "required": ["skill", "why", "starting_point", "project", "effort_weeks"]
+      }
+    }
+  },
+  "required": ["summary", "plan"]
+}

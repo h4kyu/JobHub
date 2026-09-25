@@ -1,0 +1,108 @@
+{
+  "type": "object",
+  "properties": {
+    "evaluations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "integer"
+          },
+          "hard_reject_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "skills_match": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "level_match": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "work_alignment": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "experience_quality": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "interest": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "wildcard": {
+            "type": "boolean"
+          },
+          "wildcard_reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "red_flags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "summary": {
+            "type": "string"
+          },
+          "confidence": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "fit_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "gap_tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "application_deadline": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "job_id",
+          "hard_reject_reason",
+          "skills_match",
+          "level_match",
+          "work_alignment",
+          "experience_quality",
+          "interest",
+          "wildcard",
+          "wildcard_reason",
+          "red_flags",
+          "summary",
+          "confidence",
+          "fit_tags",
+          "gap_tags",
+          "application_deadline"
+        ]
+      }
+    }
+  },
+  "required": [
+    "evaluations"
+  ]
+}

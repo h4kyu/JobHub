@@ -1,0 +1,22 @@
+# Python / tooling
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# Local Claude Code state (keep CLAUDE.md tracked)
+.claude/settings.local.json
+
+# Runtime state: SQLite DB, logs, headless-claude cwd, generated digests
+data/
+digests/
+
+# Personal documents the tool never reads (it only loads profile.yaml, profile.md, companies.yaml)
+profile/projects/
+profile/*.pdf
+profile/interview*/
+profile/prep*/

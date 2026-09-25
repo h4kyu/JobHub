@@ -1,0 +1,121 @@
+# Structured constraints and tuning knobs. Code reads this file; the model reads profile.md.
+# Fill in the placeholders below — everything else has sensible defaults.
+
+roles:                      # target role families (used in prompts and discovery)
+  - "Software Engineering (systems / infrastructure / performance)"
+  - "Machine Learning / AI Infrastructure"
+  - "Robotics / Autonomy Software"
+term: "Winter 2027"         # target work term (Jan-Apr 2027); postings whose start doesn't overlap it are hard-rejected
+term_also_accept: ["Spring 2027"]   # US "Spring" = Jan-May start; same window as a Waterloo Winter term
+alt_terms: ["Summer 2027"]  # second track: accepted and scored like the primary term, but shown in its own
+                            # tab/digest section so the two can be compared before committing to one.
+                            # Empty this list to go back to a single-term search (and re-run `jobhub rescore`).
+length_weeks: [12, null]    # [min, max] weeks; null max = longer placements (8/12/16-month co-ops) starting in the term are fine
+locations:                  # preferred locations (in order); used in prompts, and for hard filtering only if strict_location is true
+  - "United States"
+  - "Remote"
+  - "Canada"
+remote_ok: true
+strict_location: false      # true -> hard-reject postings whose location matches none of `locations` and isn't remote
+work_authorization:         # citizenships / where you can legally work (informational for the model)
+  - "Canada"
+  - "Israel"
+  - "Japan (citizenship held; passport may need renewal)"
+
+dealbreakers:               # case-insensitive substrings; a match hard-rejects before any model call
+  unpaid: ["unpaid", "volunteer position", "for academic credit only"]
+  clearance: ["security clearance", "top secret", "ts/sci", "secret clearance"]
+  citizenship: ["u.s. citizenship required", "must be a u.s. citizen", "us citizens only", "u.s. citizens only", "must be a us citizen"]
+  level: ["phd required", "phd candidates only", "currently pursuing a phd"]
+  location_exclude: []      # e.g. ["on-site in Austin"]
+  other: []
+  sponsorship_values: ["citizenship is required"]   # matched against aggregators' structured sponsorship field
+  # title_exclude: [...]   # out-of-scope title words; defaults (accounting, marketing, mechanical, ...) live in jobhub/config.py
+
+scoring:
+  likelihood:               # chance of getting an interview, from model sub-scores
+    skills_match: 0.65
+    level_match: 0.35
+  desirability:             # quality of the opportunity
+    work_alignment: 0.45
+    experience_quality: 0.30
+    company_reputation: 0.25
+  unknown_company_reputation: 50
+
+buckets:
+  # Retuned 2026-09-02 for the switch to haiku, which scores ~15 points more generously than the
+  # frontier model these gates were set against (median likelihood 61 vs 45). At the old 65 the reach
+  # bucket collapsed — high-desirability/low-likelihood jobs were all promoted into likely.
+  # Bucket gates are not model-visible: `jobhub rescore --recompute-only` re-buckets for free.
+  likely:   { min_likelihood: 72, min_desirability: 50 }
+  reach:    { min_desirability: 70, min_likelihood: 25 }
+  wildcard: { min_interest: 70, cap: 5 }
+
+llm:
+  # Scoring against a fixed rubric is a small-model job. Leaving model null inherits the Claude Code
+  # default (a frontier model), which burns the session limit ~an order of magnitude faster for no
+  # measurable gain in bucket quality. Bump to "sonnet" if Haiku's scores look noisy.
+  model: "haiku"            # null -> your Claude Code default; or e.g. "sonnet" / "opus"
+  effort: "low"             # low | medium | high | xhigh | max (evaluation); ~60% of output tokens were thinking at medium
+  discovery_effort: "high"  # discovery is a handful of calls/week and needs the reasoning — leave it high
+  # Leave unset to use your own Claude Code default (a capable model); discovery does live web research.
+  # discovery_model: "opus"
+  batch_size: 32            # jobs per claude -p call; ~11K tokens of fixed cost per call, so bigger is cheaper
+  concurrency: 2            # parallel claude -p processes
+  # Stage-1 triage, calibrated 2026-09-04 over 1,274 pending jobs: 935 archived (73%), 339 to full
+  # evaluation, at 214 in / 299 out per job vs 818 / 960 for a full rubric pass — a 45% saving overall.
+  # The highest-scored drop was 34 against a threshold of 35, i.e. nothing sat near the line.
+  # Re-check with `jobhub triage --dry-run` after any profile change; raise the threshold to cut harder.
+  triage_enabled: true
+  triage_min_score: 35      # a triage score below this archives the job outright (also the floor in the fast path)
+  # Token budgets only bound the Haiku *refinement* of ambiguous jobs. Every job is still ingested and gets a free
+  # local score; what the budget leaves unrefined is shown on the Pipeline page and the Jobs banner, with a
+  # "refine now" button. Showing every job matters more than saving tokens, so the weekly cap is off by default.
+  run_token_budget: 300000      # in+out tokens per run spent on triage; 0 = unlimited
+  weekly_token_budget: 0        # optional rolling 7-day ceiling across every recorded run (incl. discover/deep); 0 = off
+  # Discovery is manual and rotates: the frontier-model web research (13 angles, ~30-80K tokens each) is what
+  # exhausted the session limit. Set discovery_model: "__claude_code_default__" to use your Claude Code default.
+  discovery_model: "sonnet"
+  discovery_effort: "medium"
+  discovery_max_angles: 3       # angles per `jobhub discover`; 0 = all 13
+  timeout_seconds: 900
+
+# Fast scoring (jobhub/fastscore.py): a free local 0-100 score per posting from role type, title/description
+# keywords, company reputation and title red flags. Only the ambiguous band (lo < score < hi) goes to Haiku
+# triage, and only within the token budget above. Not model-visible: editing never re-evaluates anything, and
+# `jobhub rescore --recompute-only` (or the next `jobhub run`) re-applies it to stored rows for free.
+# Check changes with `jobhub score --calibrate` (compares against your existing deep evaluations).
+fast_scoring:
+  enabled: true
+  hi: 64                    # local score >= hi -> clear yes, never sent to a model
+  lo: 36                    # local score <= lo -> clear no (Archive), never sent to a model
+  likely_min: 68            # final fast score -> Likely
+  reach_min: 50             # final fast score -> Reach; below -> Archive
+  unread_to_triage: true    # a posting whose description couldn't be read is never a clear "no" (unless its title is off-target): it goes to triage
+  digest_cap: 80            # rows per digest section (Likely / Reach); the web UI always shows everything; 0 = no cap
+  triage_weight: 0.7        # final = triage_weight * triage + (1 - triage_weight) * local
+  role_weights: { gpu: 80, quant: 78, perf: 74, robotics: 72, systems: 66, ml: 62, general: 36, hardware: 20 }
+  title_domain_points: 8    # per target_domains keyword in the title (cap title_domain_cap)
+  title_domain_cap: 16
+  desc_domain_points: 3     # per target_domains keyword in the description head (cap desc_domain_cap)
+  desc_domain_cap: 12
+  desc_chars: 600           # how much of the description the local scorer reads
+  reputation_weight: 0.3    # (company reputation - 50) * this
+  software_title_bonus: 14  # any software_keywords word in the title
+  software_desc_points: 3
+  software_desc_cap: 9
+  negative_title_penalty: 30
+  # software_keywords / negative_title: word lists; defaults live in jobhub/config.py (DEFAULT_SOFTWARE_KEYWORDS, DEFAULT_NEGATIVE_TITLE)
+
+sources:
+  simplify_repos:                     # structured listings.json feeds (SimplifyJobs renames its repo each cycle; old names redirect)
+    - "SimplifyJobs/Summer2027-Internships"
+    - "vanshb03/Summer2027-Internships"          # includes Fall/Winter/Spring entries via a `season` field
+  readme_repos:                       # Markdown-table READMEs (parsed generically; one job per apply link)
+    - "negarprh/Canadian-Tech-Internships-2027"
+    - "northwesternfintech/2027QuantInternships"
+    - "speedyapply/2027-SWE-College-Jobs"
+    - "zapplyjobs/Internships-2027"
+    - "zshah101/Automated-List-Of-Summer-2027-and-Fall-2026-Tech-Internships"
+    - "sndsh404/summer-2027-internships"
+  enable_generic: false     # fetch careers pages without a known ATS (slower, noisier)

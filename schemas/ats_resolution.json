@@ -1,0 +1,10 @@
+{
+  "type": "object",
+  "properties": {
+    "ats_type": {"type": ["string", "null"], "enum": ["greenhouse", "lever", "ashby", "workday", "other", null]},
+    "ats_token": {"type": ["string", "null"]},
+    "careers_url": {"type": ["string", "null"]},
+    "notes": {"type": "string"}
+  },
+  "required": ["ats_type", "ats_token", "careers_url", "notes"]
+}

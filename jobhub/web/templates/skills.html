@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block body %}
+
+<div class="head">
+  <h1>Skills to build</h1>
+  <form method="post" action="{{ url_for('api_task', kind='skills') }}" onsubmit="this.querySelector('button').disabled=true">
+    <button class="btn">Regenerate</button>
+  </form>
+</div>
+
+{% if not generated_at %}
+  <p class="muted">
+    No report yet. Run <code>jobhub skills</code> (or press Regenerate) to mine the postings in your
+    target domains — GPU, compilers, performance, HFT, systems — for what they actually require.
+  </p>
+{% else %}
+  <p class="muted">Generated {{ generated_at[:10] }} from postings in your target domains.</p>
+
+  {% if plan and plan.plan %}
+    <section class="plan">
+      {% if plan.summary %}<p class="lede">{{ plan.summary }}</p>{% endif %}
+      {% for it in plan.plan %}
+        <article class="plan-item">
+          <h3><span class="num">{{ loop.index }}</span> {{ it.skill }} <span class="muted">· ~{{ it.effort_weeks }} weeks</span></h3>
+          {% if it.why %}<p><b>Why</b> {{ it.why }}</p>{% endif %}
+          {% if it.starting_point %}<p><b>Start with</b> {{ it.starting_point }}</p>{% endif %}
+          {% if it.project %}<p><b>Build</b> {{ it.project }}</p>{% endif %}
+        </article>
+      {% endfor %}
+    </section>
+  {% endif %}
+
+  <div class="tabs">
+    {% for s, label in [('missing','Missing'), ('partial','Partway'), ('have','Covered'), ('all','All')] %}
+      <a href="{{ url_for('skills', status=s) }}" class="{{ 'on' if status_filter == s }}">
+        {{ label }}{% if s != 'all' %} <span class="count">{{ counts.get(s, 0) }}</span>{% endif %}
+      </a>
+    {% endfor %}
+  </div>
+
+  <table class="grid">
+    <thead>
+      <tr><th>Skill</th><th class="num">Required in</th><th class="num">Preferred in</th>
+          <th>Domains</th><th>Seen at</th><th>Evidence</th></tr>
+    </thead>
+    <tbody>
+    {% for d in demands %}
+      <tr>
+        <td><b>{{ d.skill }}</b><br><span class="muted small">{{ d.category }}</span></td>
+        <td class="num"><b>{{ d.required_count }}</b></td>
+        <td class="num">{{ d.preferred_count }}</td>
+        <td class="small">{{ d.domains | join(', ') }}</td>
+        <td class="small">
+          {% for jid in d.job_ids[:4] %}
+            <a href="{{ url_for('job', job_id=jid) }}" title="{{ titles.get(jid, '') }}">{{ titles.get(jid, jid) | truncate(38) }}</a><br>
+          {% endfor %}
+          {% if d.job_ids | length > 4 %}<span class="muted">+{{ d.job_ids | length - 4 }} more</span>{% endif %}
+        </td>
+        <td class="small muted">{{ d.evidence | join(' · ') | truncate(90) }}</td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6" class="muted">Nothing in this category.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+{% endif %}
+
+{% endblock %}

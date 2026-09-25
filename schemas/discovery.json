@@ -1,0 +1,27 @@
+{
+  "type": "object",
+  "properties": {
+    "companies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "domain": {"type": ["string", "null"]},
+          "why_fit": {"type": "string"},
+          "work_areas": {"type": "array", "items": {"type": "string"}},
+          "reputation_notes": {"type": "string"},
+          "tier_guess": {"type": "integer", "minimum": 1, "maximum": 3},
+          "fit_score": {"type": "integer", "minimum": 0, "maximum": 100},
+          "reputation_score": {"type": "integer", "minimum": 0, "maximum": 100},
+          "has_intern_program": {"type": ["boolean", "null"]},
+          "careers_url": {"type": ["string", "null"]},
+          "evidence_urls": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["name", "domain", "why_fit", "work_areas", "reputation_notes", "tier_guess",
+                     "fit_score", "reputation_score", "has_intern_program", "careers_url", "evidence_urls"]
+      }
+    }
+  },
+  "required": ["companies"]
+}

@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Settings — JobHub{% endblock %}
+{% block body %}
+<p class="hint">Every value the code reads from <span class="mono">{{ yaml_path }}</span> (and the prose in <span class="mono">{{ md_path }}</span>), with its effective value.
+Read-only here: edit the file, comments there explain each knob. Profile hash <span class="mono">{{ stats.profile_hash }}</span> · rubric v{{ stats.rubric }}.</p>
+{% for sec in sections %}
+<h2>{{ sec.name }}</h2>
+<p class="hint">{{ sec.note }}</p>
+<table class="grid"><tbody>
+{% for path, value in sec.rows %}<tr><td class="mono">{{ path }}</td><td class="mono">{{ value }}</td></tr>{% endfor %}
+</tbody></table>
+{% endfor %}
+{% endblock %}

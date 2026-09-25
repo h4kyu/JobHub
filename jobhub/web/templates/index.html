@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block body %}
+{% if stats.pending or stats.awaiting_model %}
+<div class="banner">
+  {% if stats.pending %}<div><b class="num">{{ stats.pending }}</b> new postings have no score yet. <button class="task" data-kind="score" data-args='{"no_model": true}'>Score now (free)</button></div>{% endif %}
+  {% if stats.awaiting_model %}<div><b class="num">{{ stats.awaiting_model }}</b> ambiguous postings show their <i>local</i> score only{% if stats.last_score.reason %} ({{ stats.last_score.reason }}){% endif %}.
+    <button class="task" data-kind="score" data-args='{}'>Refine</button> <button class="task" data-kind="score" data-args='{"budget": 0}' title="No run cap">Refine all, no cap</button></div>{% endif %}
+  <a href="{{ url_for('pipeline_page') }}">See the pipeline →</a>
+</div>
+{% endif %}
+<form class="filters" method="get">
+  <div class="tabs">
+    {% for b, label in [('likely','Likely'),('reach','Reach'),('wildcard','Wildcard'),('archive','Archive'),('all','All')] %}
+      <a class="tab {{ 'on' if bucket == b }}" href="{{ url_for('index', bucket=b, status=status, term=term, role=role, q=q, sort=sort, src=src, unread=('1' if unread else None)) }}">{{ label }}{% if b != 'all' %}<small class="num">{{ counts.get(b, 0) }}</small>{% endif %}</a>
+    {% endfor %}
+  </div>
+  <input type="hidden" name="bucket" value="{{ bucket }}">
+  <input type="hidden" name="term" value="{{ term }}">
+  <input type="hidden" name="role" value="{{ role }}">
+  <input type="hidden" name="src" value="{{ src }}">
+  <select name="status" onchange="this.form.submit()">
+    <option value="new" {{ 'selected' if status == 'new' }}>To review</option>
+    {% for s in statuses if s != 'new' %}<option value="{{ s }}" {{ 'selected' if status == s }}>{{ s | capitalize }}</option>{% endfor %}
+    <option value="all" {{ 'selected' if status == 'all' }}>Everything</option>
+  </select>
+  <label class="chk"><input type="checkbox" name="unread" value="1" {{ 'checked' if unread }} onchange="this.form.submit()"> needs manual check</label>
+  <select name="sort" onchange="this.form.submit()">
+    <option value="match" {{ 'selected' if sort == 'match' }}>Sort: best match</option>
+    <option value="newest" {{ 'selected' if sort == 'newest' }}>Sort: newest posted</option>
+    <option value="role" {{ 'selected' if sort == 'role' }}>Sort: role type, then score</option>
+    <option value="deadline" {{ 'selected' if sort == 'deadline' }}>Sort: deadline soonest</option>
+  </select>
+  <button type="button" id="deepsel" class="ghost" disabled title="Runs the full rubric on the ticked jobs: about 13K tokens for one, ~2K each after that">⚡ Deep eval selected (<span id="npick">0</span>)</button>
+  <span class="grow"></span>
+  <input type="search" name="q" value="{{ q }}" placeholder="Search company, title, location">
+</form>
+
+{% if term_labels.alt %}
+<div class="terms">
+  <span class="lbl">Work term</span>
+  {% for t in ['all', 'primary', 'alt'] %}
+    <a class="chip {{ 'on' if term == t }}" href="{{ url_for('index', bucket=bucket, status=status, term=t, role=role, q=q, sort=sort, src=src, unread=('1' if unread else None)) }}">{{ term_labels[t] }}<small class="num">{{ term_counts.get(t, 0) }}</small></a>
+  {% endfor %}
+  {% if term != 'all' %}<span class="hint">postings that never state a term are listed under both.</span>{% endif %}
+</div>
+{% endif %}
+
+<div class="terms">
+  <span class="lbl">Scored by</span>
+  {% for k, label in [('all', 'Everything'), ('fast', 'Fast score'), ('deep', 'Deep eval')] %}
+    <a class="chip {{ 'on' if src == k }}" href="{{ url_for('index', bucket=bucket, status=status, term=term, role=role, q=q, sort=sort, src=k, unread=('1' if unread else None)) }}">{{ label }}<small class="num">{{ src_counts.get(k, 0) }}</small></a>
+  {% endfor %}
+  {% if src != 'deep' %}<span class="hint">fast = free local score, refined by a capped Haiku pass when ambiguous; deep = full rubric (⚡, on demand).</span>{% endif %}
+</div>
+
+<div class="terms">
+  <span class="lbl">Role type</span>
+  {% for k, label in role_labels.items() if k == 'all' or role_counts.get(k) or role == k %}
+    <a class="chip {{ 'on' if role == k }}" href="{{ url_for('index', bucket=bucket, status=status, term=term, role=k, q=q, sort=sort, src=src, unread=('1' if unread else None)) }}">{{ label }}<small class="num">{{ role_counts.get(k, 0) }}</small></a>
+  {% endfor %}
+</div>
+
+<div class="listhead"><span>Company · role</span><span>Location</span><span>Scores</span><span>What it is · fit · gaps · warnings</span><span>Your call</span></div>
+<div class="jobs">
+{% for r in rows %}
+<article class="jobcard" data-id="{{ r.job_id }}">
+  <div>
+    <div class="co"><input type="checkbox" class="pick" value="{{ r.job_id }}" title="select for Deep eval"> {{ r.company_name }}</div>
+    <a class="title" href="{{ url_for('job', job_id=r.job_id) }}">{{ r.title }}</a>
+    <div class="badges">
+      {% if r.is_new %}<span class="badge new">new</span>{% endif %}
+      {% if r.tier %}<span class="badge tier">tier {{ r.tier }}</span>{% endif %}
+      <span class="badge role">{{ r.role_label }}</span>
+      <span class="badge src {{ r.src }}" title="{{ {'fast': 'local score only: no model read this posting', 'triage': 'local score refined by a Haiku triage pass (title + opening lines)', 'deep': 'full rubric evaluation', 'rules': 'rejected by the deterministic prefilter'}[r.src] }}">{{ {'fast': 'fast', 'triage': 'triage', 'deep': 'deep', 'rules': 'rules'}[r.src] }}</span>
+      {% if r.app_limit %}<span class="badge limit {{ 'warn' if r.app_limit.full }}" title="{{ r.app_limit.text }}">max {{ r.app_limit.count }} app{{ 's' if r.app_limit.count != 1 }} · {{ r.app_limit.used }} used</span>{% endif %}
+      {% if term_labels.alt %}<span class="badge term {{ r.track }}" title="{{ r.term_hint }}">{{ r.term_label }}</span>{% endif %}
+      {% if r.unread or (r.confidence is not none and r.confidence < 45) %}<span class="badge warn" title="{{ 'posting could not be read — scored from title and company only' if r.unread else 'low model confidence' }}">check manually</span>{% endif %}
+      <a class="badge" href="{{ r.canonical_url }}" target="_blank" rel="noopener">open ↗</a>
+    </div>
+  </div>
+  <div class="loc">{{ r.location or '—' }}
+    <div class="dates">posted {{ r.posted_at or r.first_seen_at[:10] }}{% if r.deadline %}<br><span class="{{ 'due soon' if r.due_days is not none and r.due_days <= 7 else 'due' }}">due {{ r.deadline }}{% if r.due_days is not none and r.due_days >= 0 %} ({{ r.due_days }}d){% endif %}</span>{% endif %}</div>
+  </div>
+  {% if r.hard_reject_reason %}
+  <div class="scores hint">rejected</div>
+  <div class="summary"><div class="tags"><span class="tag warn">⚠ {{ r.hard_reject_reason.replace('model: ', '') }}</span><span class="tag gap">by {{ {'rules': 'rules', 'triage': 'triage', 'fast': 'fast score', 'deep': 'model'}[r.src] }}</span></div></div>
+  {% else %}
+  {% if r.src in ('fast', 'triage') %}
+  <div class="scores"><span>Score</span><b>{{ r.likelihood }}</b>{% if r.fast.triage is not none %}<span>Triage</span><b>{{ r.fast.triage }}</b>{% endif %}<span>Local</span><b>{{ r.fast.local if r.fast.local is not none else '—' }}</b></div>
+  {% else %}
+  <div class="scores"><span>Likely</span><b>{{ r.likelihood }}</b><span>Desire</span><b>{{ r.desirability }}</b><span>Interest</span><b>{{ r.interest if r.interest is not none else '—' }}</b></div>
+  {% endif %}
+  {% with cls='' %}{% include "_summary.html" %}{% endwith %}
+  {% endif %}
+  <div class="act">
+    <select class="status" autocomplete="off" data-id="{{ r.job_id }}">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if r.app_status == s }}>{{ s | capitalize }}</option>{% endfor %}</select>
+    <div class="quick"><button data-status="shortlisted" title="Shortlist">★</button><button data-status="applied" title="Applied">✓</button><button data-status="skipped" title="Skip — not for me">✕</button><button data-status="closed" title="Closed — posting is gone">⌫</button></div>
+    {% if r.src != 'deep' and r.src != 'rules' %}<button class="task ghost deepone" data-kind="deep" data-args='{"job_ids":[{{ r.job_id }}]}' title="Deep eval: full rubric for this job, ~13K tokens">⚡ deep eval</button>{% endif %}
+  </div>
+</article>
+{% else %}
+<div class="empty">Nothing to review here{% if stats.pending %} — {{ stats.pending }} postings are waiting to be scored. <a href="{{ url_for('runs') }}">Run now</a>.{% endif %}</div>
+{% endfor %}
+</div>
+<p class="hint">{{ rows | length }} shown · ⚡ deep eval spends tokens, nothing else on this page does · ★ shortlist · ✓ applied · ✕ skip · ⌫ closed (posting gone). Anything you mark leaves "To review".</p>
+{% endblock %}

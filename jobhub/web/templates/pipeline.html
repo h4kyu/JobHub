@@ -1,0 +1,133 @@
+{% extends "base.html" %}
+{% block title %}Pipeline — JobHub{% endblock %}
+{% macro knob(key, label, hint='') %}
+<div class="knob"><span class="kname">{{ label }} <code>{{ key }}</code></span>
+  {% if key in editable %}
+    {% if kinds[key] == 'bool' %}<input type="checkbox" class="knobinput" data-knob="{{ key }}" {{ 'checked' if editable[key] == 'True' }}>
+    {% else %}<input type="number" class="knobinput" step="{{ '0.05' if kinds[key] == 'float' else '1' }}" data-knob="{{ key }}" value="{{ editable[key] }}"><button class="ghost saveknob" data-knob="{{ key }}">Save</button>{% endif %}
+  {% endif %}
+  {% if hint %}<span class="hint">{{ hint }}</span>{% endif %}</div>
+{% endmacro %}
+{% macro seg(cls, n, label) %}{% if n %}<i class="{{ cls }}" style="flex:{{ n }}" title="{{ label }}: {{ '{:,}'.format(n) }}"></i>{% endif %}{% endmacro %}
+{% set f = st.funnel %}{% set total = st.ingest.active %}
+{% block body %}
+<p class="hint lede">Every open posting flows through these stages. The bar shows where all <b class="num">{{ '{:,}'.format(total) }}</b> of them sit right now;
+the list below it says what, if anything, is keeping jobs from being ingested, scored or refined, and what lifts it. Only <b>Refinement</b> and <b>Deep eval</b> spend tokens.</p>
+
+<div class="funnel">
+  {{ seg('unscored', f.unscored, 'waiting to be fetched or scored') }}{{ seg('rules', f.rules, 'rejected by rules') }}{{ seg('lno', f.local_no, 'local score: clear no') }}
+  {{ seg('lamb', f.local_ambiguous, 'local score only, awaiting refinement') }}{{ seg('lyes', f.local_yes, 'local score: clear yes') }}{{ seg('tri', f.triage, 'refined by triage') }}{{ seg('deepseg', f.deep, 'deep evaluated') }}
+</div>
+<div class="legend">
+  <span><i class="unscored"></i>waiting <b class="num">{{ f.unscored }}</b></span><span><i class="rules"></i>rejected by rules <b class="num">{{ f.rules }}</b></span>
+  <span><i class="lno"></i>local: no <b class="num">{{ f.local_no }}</b></span><span><i class="lamb"></i>local: ambiguous, not refined <b class="num">{{ f.local_ambiguous }}</b></span>
+  <span><i class="lyes"></i>local: yes <b class="num">{{ f.local_yes }}</b></span><span><i class="tri"></i>refined (triage) <b class="num">{{ f.triage }}</b></span>
+  <span><i class="deepseg"></i>deep evaluated <b class="num">{{ f.deep }}</b></span>
+</div>
+
+<h2>What is holding jobs back</h2>
+{% if st.limits %}
+<div class="limits">
+{% for l in st.limits %}
+  <div class="limit {{ l.level }}"><div><span class="badge {{ 'warn' if l.level == 'warn' else '' }}">{{ l.stage }}</span> {{ l.text }}<div class="hint">{{ l.action }}</div></div>
+    <div class="acts">
+    {% if l.kind == 'ingest' %}<button class="task" data-kind="ingest" data-args='{}'>Run ingest</button>{% endif %}
+    {% if l.kind == 'retry' %}<button class="task" data-kind="ingest" data-args='{"retry_unreadable": true}'>Retry fetch</button>{% endif %}
+    {% if l.kind == 'score' %}<button class="task" data-kind="score" data-args='{"no_model": true}'>Score now (free)</button>{% endif %}
+    {% if l.kind == 'refine' %}<button class="task" data-kind="score" data-args='{}'>Refine (up to {{ llm.run_token_budget | k if llm.run_token_budget else '∞' }})</button><button class="task" data-kind="score" data-args='{"budget": 0}' title="No run cap: spends whatever the remaining ambiguous jobs need">Refine all, no cap</button>{% endif %}
+    {% if l.kind == 'resolve' %}<button class="task" data-kind="resolve" data-args='{}'>Resolve feeds (free)</button>{% endif %}
+    {% if l.link %}<a class="badge" href="{{ url_for(l.link) }}">open</a>{% endif %}
+    </div></div>
+{% endfor %}
+</div>
+{% else %}<div class="limit ok">Nothing is held back: every open posting is ingested, scored and refined as far as your settings allow.</div>{% endif %}
+
+<div class="stages">
+
+<section class="stage"><header><span class="n">0</span><h3>Sources</h3><span class="cost free">free</span></header>
+  <p class="what">Where postings come from: GitHub internship lists (aggregators) plus the <b>job feeds of individual companies</b>. A company's "feed" is the public page-behind-the-page its careers site is built on (Greenhouse, Lever, Ashby or Workday), which lists <i>all</i> its openings and can be read directly. Companies without a readable feed only show up if an aggregator list carries them.</p>
+  <div class="metrics">
+    <div><b class="num">{{ st.sources.repos.get('active', 0) }}</b><span>aggregator lists active</span></div>
+    <div><b class="num">{{ st.sources.polled }}</b><span>company feeds read every run</span></div>
+    <div class="{{ 'warn' if st.sources.approved_no_board }}"><b class="num">{{ st.sources.approved_no_board }}</b><span>approved, no readable feed</span></div>
+    <div><b class="num">{{ st.sources.proposed_no_board }}</b><span>proposed, no feed</span></div>
+  </div>
+  <div class="runbox"><button class="task" data-kind="resolve" data-args='{}'>Resolve missing feeds (free)</button>
+    <a class="badge" href="{{ url_for('companies') }}">Companies &amp; discovery</a> <a class="badge" href="{{ url_for('blindspots') }}">Blind spots</a>
+    <span class="hint">Discovery (finding new companies) spends tokens; it lives on the Companies page.</span></div>
+  {{ knob('llm.discovery_max_angles', 'Discovery angles per press', 'each ≈ 30–80K tokens') }}
+</section>
+
+<section class="stage"><header><span class="n">1</span><h3>Ingest</h3><span class="cost free">free</span></header>
+  <p class="what">Reads every source, removes duplicates, then fetches each surviving posting's full description (from the company feed where possible, otherwise by loading the page). Postings that fail a metadata check (wrong term, location, sponsorship) are never fetched.</p>
+  <div class="metrics">
+    <div><b class="num">{{ '{:,}'.format(st.ingest.desc.text) }}</b><span>with a description</span></div>
+    <div class="{{ 'warn' if st.ingest.desc.pending_fetch }}"><b class="num">{{ st.ingest.desc.pending_fetch }}</b><span>waiting to be fetched</span></div>
+    <div class="{{ 'warn' if st.ingest.desc.unreadable }}"><b class="num">{{ st.ingest.desc.unreadable }}</b><span>unreadable (site blocks us)</span></div>
+    <div><b class="num">{{ '{:,}'.format(st.ingest.desc.never) }}</b><span>not fetched: rejected on metadata</span></div>
+  </div>
+  {% set li = st.sources.last_ingest %}{% if li %}<p class="hint">Last ingest {{ li.started_at[:16].replace('T', ' ') }} UTC: {{ li.jobs_seen }} seen, {{ li.jobs_new }} new.</p>{% endif %}
+  <form class="taskform runbox" data-kind="ingest"><label>fetch limit <input name="fetch_limit" type="number" min="0" placeholder="no limit"></label>
+    <label class="chk"><input type="checkbox" name="retry_unreadable"> retry unreadable first</label><button class="primary">Run ingest</button></form>
+  <div class="knob"><span class="kname">Fetch attempts before giving up <code>db.FETCH_GIVE_UP</code></span><span class="hint">{{ give_up }} (a code constant; “retry unreadable” resets the counter)</span></div>
+</section>
+
+<section class="stage"><header><span class="n">2</span><h3>Prefilter</h3><span class="cost free">free</span></header>
+  <p class="what">Deterministic rules from your profile: wrong work term, unpaid, citizenship or clearance you lack, out-of-scope titles, bare-metal firmware. Rejects are kept and listed (Jobs → Archive), never deleted.</p>
+  <div class="metrics"><div><b class="num">{{ '{:,}'.format(st.prefilter.count) }}</b><span>rejected by rules</span></div>
+    {% for r, n in st.prefilter.reasons[:3] %}<div><b class="num">{{ n }}</b><span>{{ r }}</span></div>{% endfor %}</div>
+  <div class="runbox"><span class="hint">Runs automatically inside Ingest and Score. Rules live in <a href="{{ url_for('settings') }}">Settings</a> (dealbreakers, term, locations).</span></div>
+</section>
+
+<section class="stage"><header><span class="n">3</span><h3>Local score</h3><span class="cost free">free</span></header>
+  <p class="what">Every remaining posting gets a 0–100 score with no model: role type from the title, target-field and “software” keywords in the title and the first ~600 characters of the description, company reputation, and off-target title words. At or above <b>hi</b> it is a clear yes, at or below <b>lo</b> a clear no, in between it is <b>ambiguous</b>. A posting with <i>no</i> readable description is never a clear no (unless its title is off-target): it goes to refinement.</p>
+  <div class="metrics">
+    <div class="{{ 'warn' if st.score.pending }}"><b class="num">{{ st.score.pending }}</b><span>not scored yet</span></div>
+    <div><b class="num">{{ '{:,}'.format(f.local_yes + f.triage + f.local_ambiguous + f.local_no) }}</b><span>scored (local or refined)</span></div>
+    <div><b class="num">{{ st.score.unread }}</b><span>scored without a description</span></div>
+  </div>
+  <form class="taskform runbox" data-kind="score"><input type="hidden" name="no_model" value="on"><label>max jobs <input name="limit" type="number" min="1" placeholder="all"></label><button class="primary">Score now (free)</button></form>
+  {{ knob('fast_scoring.hi', 'Clear-yes at or above', 'raise to send more jobs to refinement') }}
+  {{ knob('fast_scoring.lo', 'Clear-no at or below', 'raise to hide more; lower to refine more') }}
+  {{ knob('fast_scoring.likely_min', 'Likely at or above') }}{{ knob('fast_scoring.reach_min', 'Reach at or above') }}
+  {{ knob('fast_scoring.unread_to_triage', 'Unreadable postings go to refinement') }}{{ knob('fast_scoring.enabled', 'Fast scoring enabled') }}
+  <p class="hint">Role weights, keyword lists and point values: <a href="{{ url_for('settings') }}">Settings → fast_scoring</a> (edit <span class="mono">profile.yaml</span>; check with <span class="mono">jobhub score --calibrate</span>).</p>
+</section>
+
+<section class="stage"><header><span class="n">4</span><h3>Refinement (triage)</h3><span class="cost tok">tokens, capped</span></header>
+  <p class="what">A small model (Haiku) reads only the <i>ambiguous</i> postings' title, company and opening lines and returns a 0–100 plausibility score, blended with the local score. Below <b>{{ st.triage.min_score }}</b> it archives the job. Jobs it hasn't reached yet keep their local score and are listed as “not refined”; nothing is hidden.</p>
+  <div class="metrics">
+    <div class="{{ 'warn' if st.triage.awaiting }}"><b class="num">{{ st.triage.awaiting }}</b><span>ambiguous, not refined yet</span></div>
+    <div><b class="num">{{ '{:,}'.format(st.triage.done) }}</b><span>refined so far</span></div>
+    <div><b class="num">{{ st.triage.week_used | k }}</b><span>tokens used, last 7 days</span></div>
+    <div><b class="num">{{ st.triage.run_cap | k if st.triage.run_cap else 'none' }}</b><span>run cap{% if st.triage.weekly_cap %} · weekly {{ st.triage.weekly_cap | k }}{% else %} · weekly off{% endif %}</span></div>
+  </div>
+  {% if st.triage.last.reason %}<p class="hint">Last score run left {{ st.triage.last.deferred }} unrefined: <b>{{ st.triage.last.reason }}</b> ({{ st.triage.last.at[:16].replace('T', ' ') }} UTC).</p>{% endif %}
+  <form class="taskform runbox" data-kind="score"><label>token budget <input name="budget" type="number" min="0" placeholder="{{ llm.run_token_budget }}"></label>
+    <button class="primary">Refine now</button><button type="button" class="task" data-kind="score" data-args='{"budget": 0}' title="No run cap">Refine all, no cap</button></form>
+  {{ knob('llm.run_token_budget', 'Run cap (tokens)', '0 = no cap. ≈ 650 tokens per job') }}
+  {{ knob('llm.weekly_token_budget', 'Weekly cap (tokens)', '0 = off') }}
+  {{ knob('llm.triage_enabled', 'Refinement enabled') }}{{ knob('llm.triage_min_score', 'Archive below triage score') }}
+  {{ knob('llm.triage_batch_size', 'Jobs per model call') }}{{ knob('llm.triage_desc_chars', 'Characters of description read') }}{{ knob('fast_scoring.triage_weight', 'Weight of triage vs local score') }}
+  {{ knob('llm.concurrency', 'Parallel model calls') }}
+</section>
+
+<section class="stage"><header><span class="n">5</span><h3>Deep evaluation</h3><span class="cost tok">tokens, on demand</span></header>
+  <p class="what">The full rubric on one job at a time: sub-scores, a one-line summary, fit and gap tags, deadline. It never runs by itself. Use ⚡ on a job, tick several on the Jobs page, or run the top few here. About 13K tokens for the first job, ~2K for each after.</p>
+  <div class="metrics"><div><b class="num">{{ st.deep.count }}</b><span>deep evaluated</span></div></div>
+  <form class="taskform runbox" data-kind="deep"><label>top N <input name="top" type="number" min="1" placeholder="e.g. 20"></label>
+    <label>bucket <select name="bucket"><option value="">any</option><option>likely</option><option>reach</option></select></label><button class="primary">Deep eval top N</button></form>
+</section>
+
+<section class="stage"><header><span class="n">6</span><h3>What you see</h3><span class="cost free">free</span></header>
+  <p class="what">Jobs page tabs and the daily digest are read straight from the scores above. Nothing here calls a model.</p>
+  <div class="metrics">
+    {% for b in ['likely', 'reach', 'wildcard', 'archive'] %}<div><b class="num">{{ '{:,}'.format(st.output.buckets.get(b, 0)) }}</b><span><a href="{{ url_for('index', bucket=b) }}">{{ b }}</a></span></div>{% endfor %}
+  </div>
+  <div class="runbox"><button class="task" data-kind="digest" data-args='{}'>Write digest</button>
+    <button class="task primary" data-kind="run" data-args='{}'>▶ Run everything (ingest → score → digest)</button>
+    {{ knob('fast_scoring.digest_cap', 'Digest rows per section', '0 = no cap; the web UI always shows all') }}</div>
+</section>
+
+</div>
+{% endblock %}

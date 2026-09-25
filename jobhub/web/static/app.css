@@ -1,0 +1,160 @@
+/* JobHub — cool-neutral ground, one teal accent, semantic bucket colours. IBM Plex Sans / Mono. */
+:root {
+  --bg:#f5f7f9; --surface:#ffffff; --ink:#1a2330; --mut:#66707d; --faint:#8b95a3; --line:#dde2e9; --wash:#edf0f4;
+  --acc:#0e7c86; --acc-ink:#0b5f66; --acc-wash:#e3f3f4;
+  --likely:#1c7c3e; --reach:#6d4ae6; --wildcard:#b8621b; --archive:#7a8593;
+  --ok:#1c7c3e; --warn:#b8621b; --warn-wash:#fbf1e6; --bad:#b4232c;
+  --r:6px; --font:"IBM Plex Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; --mono:"IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg:#0f1318; --surface:#161b22; --ink:#e7ecf2; --mut:#97a3b1; --faint:#6f7b89; --line:#27303b; --wash:#1c232c;
+  --acc:#2fb8c2; --acc-ink:#7fd6dd; --acc-wash:#12313a; --likely:#3fbf6a; --reach:#a48cff; --wildcard:#e8934a; --archive:#8e99a7;
+  --ok:#3fbf6a; --warn:#e8934a; --warn-wash:#33261a; --bad:#f06b74; } }
+* { box-sizing:border-box }
+html { font-size:14px }
+body { margin:0; font:1rem/1.45 var(--font); color:var(--ink); background:var(--bg); -webkit-font-smoothing:antialiased }
+a { color:var(--acc-ink); text-decoration:none } a:hover { text-decoration:underline }
+h1,h2,h3 { text-wrap:balance; margin:0 } h2 { font-size:1.05rem; font-weight:600; margin:22px 0 10px } h2 small { color:var(--faint); font-weight:400 }
+.mono { font-family:var(--mono); font-size:.86rem }
+.num { font-variant-numeric:tabular-nums }
+
+/* header */
+.top { display:flex; align-items:center; gap:28px; height:52px; padding:0 22px; background:var(--surface); border-bottom:1px solid var(--line); position:sticky; top:0; z-index:10 }
+.brand { font-weight:700; letter-spacing:.01em; color:var(--ink); font-size:1.05rem }
+.top nav { display:flex; gap:4px } .top nav a { padding:6px 10px; border-radius:var(--r); color:var(--mut); font-weight:500 } .top nav a.on { color:var(--ink); background:var(--wash) } .top nav a:hover { text-decoration:none; color:var(--ink) }
+.stats { margin-left:auto; display:flex; gap:18px; font-size:.86rem; color:var(--mut) } .stats b { color:var(--ink); font-weight:600 } .stats .warn b { color:var(--warn) }
+.taskbar { display:none; align-items:center; gap:8px; padding:7px 22px; background:var(--warn-wash); border-bottom:1px solid var(--line); font-size:.9rem } .taskbar.show { display:flex }
+.spin { width:11px; height:11px; border:2px solid var(--warn); border-top-color:transparent; border-radius:50%; animation:sp .9s linear infinite } @keyframes sp { to { transform:rotate(360deg) } }
+@media (prefers-reduced-motion: reduce) { .spin { animation:none } }
+main { padding:18px 22px 60px; max-width:1600px; margin:0 auto }
+
+/* controls */
+input, select, button { font:inherit; color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:6px 10px }
+input:focus, select:focus, button:focus-visible { outline:2px solid var(--acc); outline-offset:1px }
+button { cursor:pointer } button:hover { border-color:var(--acc) } button.primary { background:var(--acc); border-color:var(--acc); color:#fff; font-weight:600 } button.primary:hover { background:var(--acc-ink) }
+button.ghost { background:transparent } .hint { color:var(--mut); font-size:.86rem }
+
+/* jobs list */
+.filters { display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:14px }
+.tabs { display:flex; background:var(--wash); padding:3px; border-radius:8px; gap:2px }
+.tab { padding:5px 12px; border-radius:6px; color:var(--mut); font-weight:500 } .tab:hover { text-decoration:none; color:var(--ink) } .tab.on { background:var(--surface); color:var(--ink); box-shadow:0 1px 2px rgba(0,0,0,.08) }
+.tab small { color:var(--faint); margin-left:4px } .tab.on small { color:var(--mut) }
+.filters .grow { flex:1 } .filters input[type=search] { min-width:260px }
+.chk { display:flex; align-items:center; gap:6px; color:var(--mut); font-size:.9rem }
+/* work-term track chips (second, orthogonal axis to the bucket tabs) */
+.terms { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin:-4px 0 14px }
+.terms .lbl { font-size:.76rem; text-transform:uppercase; letter-spacing:.06em; color:var(--faint) }
+.chip { padding:3px 11px; border-radius:14px; border:1px solid var(--line); background:var(--surface); color:var(--mut); font-size:.88rem }
+.chip:hover { text-decoration:none; color:var(--ink); border-color:var(--acc) }
+.chip.on { color:var(--acc-ink); border-color:var(--acc); background:var(--acc-wash); font-weight:600 }
+.chip small { color:var(--faint); margin-left:5px; font-variant-numeric:tabular-nums } .chip.on small { color:var(--acc-ink) }
+
+.jobs { display:flex; flex-direction:column; gap:8px }
+.jobcard { display:grid; grid-template-columns: 290px 130px 92px minmax(320px, 1fr) 118px; gap:18px; align-items:start; padding:12px 14px; background:var(--surface); border:1px solid var(--line); border-radius:var(--r) }
+.jobcard.changed { border-color:var(--acc) }
+.jobcard .co { font-weight:600 } .jobcard .title { display:block; margin-top:2px; line-height:1.3 } .jobcard .badges { margin-top:5px; display:flex; flex-wrap:wrap; gap:4px }
+.jobcard .loc { color:var(--mut); font-size:.9rem; padding-top:2px } .dates { margin-top:6px; font-size:.8rem; color:var(--faint) } .dates .due { color:var(--mut) } .dates .due.soon { color:var(--warn); font-weight:600 }
+.scores { display:grid; grid-template-columns:auto 1fr; column-gap:8px; row-gap:2px; font-size:.86rem; color:var(--mut) } .scores b { font-weight:600; color:var(--ink); font-variant-numeric:tabular-nums; text-align:right }
+.summary { font-size:.93rem } .summary .desc1 { margin-bottom:6px }
+.tags { display:flex; flex-wrap:wrap; gap:4px; margin-top:4px }
+.tag { display:inline-block; font-size:.78rem; line-height:1.5; padding:1px 8px; border-radius:4px; border:1px solid transparent }
+.tag.fit { color:var(--likely); background:color-mix(in srgb, var(--likely) 12%, transparent); border-color:color-mix(in srgb, var(--likely) 35%, transparent) }
+.tag.gap { color:var(--mut); background:var(--wash); border-color:var(--line); text-decoration:line-through; text-decoration-color:var(--faint) }
+.tag.warn { color:var(--warn); background:var(--warn-wash); border-color:color-mix(in srgb, var(--warn) 40%, transparent) }
+.listhead { display:grid; grid-template-columns: 290px 130px 92px minmax(320px, 1fr) 118px; gap:18px; padding:0 14px 6px; font-size:.76rem; text-transform:uppercase; letter-spacing:.06em; color:var(--faint) }
+@media (max-width: 1100px) { .listhead { display:none } } .summary ul { margin:0; padding-left:18px } .summary li { margin:1px 0 } .summary .wild { color:var(--wildcard); margin-top:4px; font-size:.86rem } .summary .flags { color:var(--warn); margin-top:4px; font-size:.86rem }
+.act { display:flex; flex-direction:column; gap:6px } .act select { width:100% } .quick { display:flex; gap:4px } .quick button { flex:1; padding:3px 0 }
+.empty { padding:40px; text-align:center; color:var(--mut); background:var(--surface); border:1px dashed var(--line); border-radius:var(--r) }
+
+.badge { display:inline-block; font-size:.76rem; line-height:1.4; padding:1px 7px; border-radius:10px; border:1px solid var(--line); color:var(--mut); background:var(--wash) }
+.badge.term.alt { color:var(--reach); border-color:color-mix(in srgb, var(--reach) 45%, transparent); background:color-mix(in srgb, var(--reach) 10%, transparent) }
+.badge.term.unknown { font-style:italic }
+.badge.new { color:var(--ok); border-color:var(--ok); background:transparent } .badge.warn { color:var(--warn); border-color:var(--warn); background:var(--warn-wash) } .badge.tier { color:var(--acc-ink); border-color:var(--acc); background:var(--acc-wash) }
+.pill { display:inline-block; padding:3px 10px; border-radius:12px; color:#fff; font-weight:600; font-size:.78rem; letter-spacing:.04em; text-transform:uppercase }
+.pill.likely { background:var(--likely) } .pill.reach { background:var(--reach) } .pill.wildcard { background:var(--wildcard) } .pill.archive { background:var(--archive) }
+
+/* job page */
+.jobpage { display:grid; grid-template-columns: minmax(0, 1fr) 340px; gap:28px; align-items:start }
+.jobpage h1 { font-size:1.5rem; font-weight:600; line-height:1.25; margin:4px 0 4px } .jobpage .sub { color:var(--mut); font-size:1rem; margin-bottom:14px }
+.back { font-size:.9rem; color:var(--mut) }
+.card { background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:16px }
+.aside { position:sticky; top:66px; display:flex; flex-direction:column; gap:12px }
+.bigscores { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; text-align:center; margin-top:12px } .bigscores b { display:block; font-size:1.7rem; font-weight:600; font-variant-numeric:tabular-nums } .bigscores span { font-size:.78rem; color:var(--mut); text-transform:uppercase; letter-spacing:.05em }
+.subs { display:grid; grid-template-columns:1fr auto; row-gap:4px; margin-top:12px; font-size:.86rem; color:var(--mut); border-top:1px solid var(--line); padding-top:10px } .subs b { color:var(--ink); font-variant-numeric:tabular-nums }
+.statusform { display:flex; flex-direction:column; gap:8px } .statusform label { font-size:.8rem; color:var(--mut); text-transform:uppercase; letter-spacing:.05em } .statusform .row { display:flex; gap:8px } .statusform select { flex:1 } #saved { color:var(--ok); font-size:.86rem }
+.meta { color:var(--mut); font-size:.86rem; line-height:1.6 } .meta a { word-break:break-all }
+.desc pre { white-space:pre-wrap; font:.93rem/1.55 var(--font); margin:0 } .reject { color:var(--bad); font-weight:500 }
+.summary.lead { font-size:1rem } .summary.lead li { margin:3px 0 }
+
+/* tables (companies, runs) */
+table { width:100%; border-collapse:collapse; background:var(--surface); border:1px solid var(--line); border-radius:var(--r); overflow:hidden }
+th { text-align:left; font-size:.78rem; text-transform:uppercase; letter-spacing:.05em; color:var(--mut); padding:8px 10px; border-bottom:1px solid var(--line); background:var(--wash) }
+td { padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top } tr:last-child td { border-bottom:none } td.n, th.n { text-align:right; font-variant-numeric:tabular-nums }
+td.why { color:var(--mut); font-size:.86rem; max-width:560px }
+.toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:6px }
+#livelog { display:none; margin:14px 0 } #livelog.show { display:block } #logtext { background:#0f1318; color:#d5dce4; padding:12px 14px; border-radius:var(--r); max-height:400px; overflow:auto; font:.82rem/1.45 var(--mono); white-space:pre-wrap; margin:0 }
+td.done { color:var(--ok) } td.failed { color:var(--bad) } td.running { color:var(--warn) }
+.digest { max-width:1100px } .digest table { font-size:.9rem } .digest th { position:static }
+@media (max-width: 1100px) { .jobcard { grid-template-columns: 1fr 1fr } .jobcard .summary { grid-column: 1 / -1 } .jobpage { grid-template-columns: 1fr } .aside { position:static } }
+
+/* ---- skills page ---- */
+.plan { margin: 1.2rem 0 2rem; }
+.plan .lede { font-size: 1.05rem; line-height: 1.5; margin-bottom: 1.2rem; }
+.plan-item { border-left: 3px solid var(--accent, #4a7); padding: .1rem 0 .1rem 1rem; margin-bottom: 1.1rem; }
+.plan-item h3 { margin: 0 0 .35rem; font-size: 1rem; }
+.plan-item h3 .num { display: inline-block; min-width: 1.4em; opacity: .5; font-family: "IBM Plex Mono", monospace; }
+.plan-item p { margin: .2rem 0; line-height: 1.45; }
+.plan-item b { font-weight: 600; opacity: .75; margin-right: .3rem; }
+.tabs { display: flex; gap: .25rem; margin: 1.4rem 0 .6rem; flex-wrap: wrap; }
+.tabs a { padding: .3rem .7rem; border-radius: 4px; text-decoration: none; font-size: .9rem; }
+.tabs a.on { background: var(--chip, #e8e8ea); font-weight: 600; }
+.tabs .count { opacity: .55; font-family: "IBM Plex Mono", monospace; font-size: .85em; }
+table.grid { width: 100%; border-collapse: collapse; font-size: .92rem; }
+table.grid th, table.grid td { text-align: left; padding: .5rem .6rem; border-bottom: 1px solid var(--line, #e4e4e7); vertical-align: top; }
+table.grid th.num, table.grid td.num { text-align: right; font-family: "IBM Plex Mono", monospace; }
+table.grid .small { font-size: .85em; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+
+/* ---- blind spots ---- */
+table.grid tr.blind td { background: color-mix(in srgb, var(--warn, #c60) 7%, transparent); }
+table.grid tr.blind td:first-child { box-shadow: inset 3px 0 0 var(--warn, #c60); }
+.warn { color: var(--warn, #c60); font-weight: 600; }
+
+/* ---- fast-score flow: provenance, budget meter, task panel ---- */
+.badge.src { font-family:var(--mono); font-size:.72rem }
+.badge.src.fast { color:var(--mut) } .badge.src.triage { color:var(--reach); border-color:color-mix(in srgb, var(--reach) 45%, transparent) }
+.badge.src.deep { color:var(--acc-ink); border-color:var(--acc); background:var(--acc-wash) } .badge.src.rules { color:var(--faint) }
+.pick { margin:0 4px 0 0; vertical-align:-1px } .deepone { font-size:.82rem; padding:3px 6px }
+.stats .meter { position:relative; display:inline-block; padding-bottom:3px; color:var(--mut) } .stats .meter:hover { text-decoration:none }
+.stats .meter i { position:absolute; left:0; bottom:0; height:2px; background:var(--acc); border-radius:1px }
+.stats .meter.high i { background:var(--warn) } .stats .meter.over i, .stats .meter.over b { background:var(--bad); color:var(--bad) } .stats .meter.over b { background:none }
+.budget { margin-bottom:6px } .budgetrow { display:flex; gap:40px; flex-wrap:wrap; align-items:flex-start; margin-bottom:12px }
+.budgetrow .big { font-size:1.6rem; font-weight:600 } .budgetrow .big.over { color:var(--bad) } .budgetrow .big.high { color:var(--warn) }
+.bar { width:260px; height:6px; background:var(--wash); border-radius:3px; margin-top:6px; overflow:hidden } .bar i { display:block; height:100%; background:var(--acc) } .bar.high i { background:var(--warn) } .bar.over i { background:var(--bad) }
+.taskgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(270px, 1fr)); gap:12px }
+.taskform { display:flex; flex-direction:column; gap:8px } .taskform h3 { font-size:1rem; font-weight:600 } .taskform h3 small { color:var(--faint); font-weight:400 }
+.taskform label { display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:.9rem; color:var(--mut) } .taskform label input:not([type=checkbox]), .taskform label select { width:130px }
+.taskform label.chk { justify-content:flex-start } .taskform p.hint { margin:0 } .taskform button { align-self:flex-start; margin-top:2px }
+
+/* ---- pipeline page ---- */
+.lede { max-width:980px; margin:0 0 14px }
+.funnel { display:flex; height:26px; border-radius:6px; overflow:hidden; background:var(--wash); border:1px solid var(--line) } .funnel i { display:block; min-width:2px }
+.legend { display:flex; flex-wrap:wrap; gap:6px 18px; margin:8px 0 6px; font-size:.86rem; color:var(--mut) } .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px }
+.unscored { background:var(--warn) } .rules { background:var(--faint) } .lno { background:var(--archive) } .lamb { background:repeating-linear-gradient(45deg, var(--reach), var(--reach) 3px, color-mix(in srgb, var(--reach) 45%, var(--surface)) 3px, color-mix(in srgb, var(--reach) 45%, var(--surface)) 6px) }
+.lyes { background:var(--likely) } .tri { background:var(--reach) } .deepseg { background:var(--acc) }
+.limits { display:flex; flex-direction:column; gap:8px } .limit { display:flex; justify-content:space-between; gap:16px; align-items:center; padding:10px 14px; border:1px solid var(--line); border-left:4px solid var(--faint); border-radius:var(--r); background:var(--surface) }
+.limit.warn { border-left-color:var(--warn) } .limit.ok { border-left-color:var(--ok); color:var(--mut) } .limit .acts { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end }
+.stages { display:flex; flex-direction:column; gap:0; margin-top:8px }
+.stage { position:relative; background:var(--surface); border:1px solid var(--line); border-radius:var(--r); padding:14px 16px 12px; margin-bottom:26px }
+.stage:not(:last-child)::after { content:"▼"; position:absolute; left:50%; bottom:-22px; color:var(--faint); font-size:.9rem }
+.stage header { display:flex; align-items:center; gap:10px; margin-bottom:6px } .stage header h3 { font-size:1.05rem }
+.stage .n { display:inline-grid; place-items:center; width:24px; height:24px; border-radius:50%; background:var(--acc-wash); color:var(--acc-ink); font-weight:600; font-size:.85rem }
+.cost { margin-left:auto; font-size:.76rem; padding:1px 8px; border-radius:10px; border:1px solid var(--line); color:var(--mut) } .cost.tok { color:var(--warn); border-color:var(--warn); background:var(--warn-wash) } .cost.free { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 40%, transparent) }
+.what { margin:0 0 10px; color:var(--mut); max-width:1000px }
+.metrics { display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px } .metrics > div { min-width:150px; padding:8px 12px; background:var(--wash); border-radius:var(--r) } .metrics b { display:block; font-size:1.35rem; font-weight:600 } .metrics span { font-size:.8rem; color:var(--mut) }
+.metrics > div.warn b { color:var(--warn) }
+.runbox { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:8px 0; padding:0; border:0; background:none }
+.knob { display:flex; flex-wrap:wrap; gap:10px; align-items:center; padding:5px 0; border-top:1px dashed var(--line) } .knob .kname { min-width:290px } .knob code { color:var(--faint); font-size:.78rem; margin-left:4px }
+.knob input[type=number] { width:120px } .knob input.saved { border-color:var(--ok) }
+.banner { display:flex; flex-wrap:wrap; gap:8px 24px; align-items:center; padding:9px 14px; margin-bottom:12px; background:var(--warn-wash); border:1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius:var(--r) } .banner button { margin-left:6px }
+.taskform.runbox { flex-direction:row; flex-wrap:wrap; align-items:center }

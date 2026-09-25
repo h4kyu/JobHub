@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}{{ job.company_name }} — {{ job.title }}{% endblock %}
+{% block body %}
+<a class="back" href="javascript:history.back()">← Back</a>
+<div class="jobpage">
+  <div>
+    <h1>{{ job.title }}</h1>
+    <div class="sub">{{ job.company_name }}{% if company and company.tier %} <span class="badge tier">tier {{ company.tier }}</span>{% endif %}{% if term_labels.alt %} <span class="badge term {{ job.track }}" title="{{ job.term_hint }}">{{ job.term_label }}</span>{% endif %}{% if app_limit %} <span class="badge limit {{ 'warn' if app_limit.full }}" title="{{ app_limit.text }}">max {{ app_limit.count }} app{{ 's' if app_limit.count != 1 }} · {{ app_limit.used }} used</span>{% endif %} · {{ job.location or 'location unspecified' }}</div>
+    {% if ev and not ev.hard_reject_reason %}
+      <section class="card">{% with r=ev, cls='lead' %}{% include "_summary.html" %}{% endwith %}
+        {% if ev.src in ('fast', 'triage') and not ev.summary %}<p class="hint">Fast score: read from the title, company and the first few hundred characters of the posting. No model has read the full text.</p>{% endif %}</section>
+    {% elif ev %}
+      <section class="card"><p class="reject">Rejected: {{ ev.hard_reject_reason }} <span class="hint">(by {{ ev.model }})</span></p>
+        {% if ev.src != 'rules' %}<button class="task ghost deepone" data-kind="deep" data-args='{"job_ids":[{{ job.id }}]}' title="Override the reject: full rubric, ~13K tokens">⚡ Deep eval anyway</button>{% endif %}</section>
+    {% else %}<section class="card hint">Not scored yet.</section>{% endif %}
+    <h2>Posting</h2>
+    <section class="card desc">
+      {% if job.description_text %}<pre>{{ job.description_text }}</pre>
+      {% elif job.description_text == '' %}<p class="hint">Not fetched — rejected on term / sponsorship before reading.</p>
+      {% else %}<p class="hint">Could not be read (the site blocks automated access). Open the posting link.</p>{% endif %}
+    </section>
+  </div>
+  <aside class="aside">
+    {% if ev and not ev.hard_reject_reason %}
+    <section class="card">
+      <span class="pill {{ ev.bucket }}">{{ ev.bucket }}</span>
+      <span class="badge src {{ ev.src }}">{{ {'fast': 'fast score', 'triage': 'fast + triage', 'deep': 'deep eval', 'rules': 'rules'}[ev.src] }}</span>
+      {% if ev.unread %}<span class="badge warn">scored from title only</span>{% endif %}
+      {% if ev.profile_hash != stats.profile_hash %}<span class="badge warn" title="profile changed since this was scored">stale</span>{% endif %}
+      {% if ev.src in ('fast', 'triage') %}
+      <div class="bigscores"><div><b>{{ ev.likelihood }}</b><span>Score</span></div><div><b>{{ ev.fast.local if ev.fast.local is not none else '—' }}</b><span>Local</span></div><div><b>{{ ev.fast.triage if ev.fast.triage is not none else '—' }}</b><span>Triage</span></div></div>
+      <button class="task primary deepone" data-kind="deep" data-args='{"job_ids":[{{ job.id }}]}' title="Full rubric for this one job">⚡ Deep eval this job</button>
+      <p class="hint">Spends about 13K tokens: summary, fit and gap tags, a deadline if one is stated, and sub-scores replace the fast score.</p>
+      {% else %}
+      <div class="bigscores"><div><b>{{ ev.likelihood }}</b><span>Likely</span></div><div><b>{{ ev.desirability }}</b><span>Desire</span></div><div><b>{{ ev.interest if ev.interest is not none else '—' }}</b><span>Interest</span></div></div>
+      <div class="subs">{% for k, v in ev.sub_scores.items() %}<span>{{ k.replace('_',' ') }}</span><b>{{ v }}</b>{% endfor %}</div>
+      {% endif %}
+    </section>
+    {% endif %}
+    <section class="card statusform">
+      <label>Your status</label>
+      <div class="row"><select id="jobstatus" autocomplete="off">{% for s in statuses %}<option value="{{ s }}" {{ 'selected' if app_status == s }}>{{ s | capitalize }}</option>{% endfor %}</select><button class="primary" id="savestatus" data-id="{{ job.id }}">Save</button></div>
+      <input id="jobnotes" value="{{ notes or '' }}" placeholder="Notes (referral, deadline, …)"><span id="saved"></span>
+    </section>
+    <section class="card meta">
+      {% if job.terms %}Terms: {{ job.terms | join(', ') }}<br>{% endif %}{% if job.sponsorship %}Sponsorship: {{ job.sponsorship }}<br>{% endif %}
+      Posted {{ job.posted_at or '?' }} · seen {{ job.first_seen_at[:10] }} · {{ 'open' if job.active else 'closed' }}<br>
+      Source: {{ job.source }}{% if ev %}<br>Scored {{ ev.created_at[:10] }}{% endif %}<br><br>
+      {% for u in urls %}<a href="{{ u }}" target="_blank" rel="noopener">{{ u[:70] }}{{ '…' if u|length > 70 }}</a><br>{% endfor %}
+    </section>
+  </aside>
+</div>
+{% endblock %}

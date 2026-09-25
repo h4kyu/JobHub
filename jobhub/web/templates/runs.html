@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Runs — JobHub{% endblock %}
+{% block body %}
+<div class="toolbar">
+  <button class="task primary" data-kind="run" data-args='{}'>▶ Run now</button>
+  <span class="hint">Applies current weights, reads every source, fetches new postings, fast-scores them (free local score; a capped Haiku pass only for the ambiguous ones) and writes the digest. Deep evaluation never runs here.</span>
+</div>
+
+<h2>Token budget <small>what the model calls have cost, from the runs table</small></h2>
+<section class="budget card">
+  <div class="budgetrow">
+    <div><b class="num big {{ stats.budget.level }}">{{ stats.budget.week | k }}</b> <span class="hint">of {{ stats.budget.week_cap | k if stats.budget.week_cap else 'no' }} weekly cap (last 7 days)</span>
+      {% if stats.budget.week_cap %}<div class="bar {{ stats.budget.level }}"><i style="width:{{ stats.budget.pct }}%"></i></div>{% endif %}
+      {% if stats.budget.level == 'over' %}<p class="hint warn">Weekly cap reached: score/run will not call a model until older runs age out. Local scoring still runs. Raise <span class="mono">llm.weekly_token_budget</span> to override.</p>{% endif %}</div>
+    <div><b class="num big">{{ stats.budget.day | k }}</b> <span class="hint">last 24 hours</span></div>
+    <div><b class="num big">{{ stats.budget.run_cap | k if stats.budget.run_cap else '∞' }}</b> <span class="hint">cap per run (<span class="mono">llm.run_token_budget</span>)</span></div>
+  </div>
+  <table class="grid"><thead><tr><th>Spent by</th><th class="n">Runs</th><th class="n">Calls</th><th class="n">7 days</th><th class="n">30 days</th></tr></thead><tbody>
+  {% set kinds = (by_kind[30] | map(attribute='kind') | list) %}
+  {% for kind in kinds %}{% set a = (by_kind[7] | selectattr('kind', 'equalto', kind) | list | first) %}{% set b = (by_kind[30] | selectattr('kind', 'equalto', kind) | list | first) %}
+  <tr><td>{{ kind }}</td><td class="n">{{ b.runs }}</td><td class="n">{{ b.calls }}</td><td class="n">{{ ((a.inp + a.outp) if a else 0) | k }}</td><td class="n">{{ (b.inp + b.outp) | k }}</td></tr>
+  {% else %}<tr><td colspan="5" class="hint">No model calls recorded yet.</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+
+<h2>Tasks <small>every command, with its options</small></h2>
+<div class="taskgrid">
+  <form class="taskform card" data-kind="run"><h3>Run <small>ingest → fast score → digest</small></h3>
+    <label>fetch limit <input name="fetch_limit" type="number" min="0" placeholder="all"></label>
+    <label>max jobs to score <input name="limit" type="number" min="1" placeholder="all"></label>
+    <label>token budget <input name="budget" type="number" min="0" placeholder="{{ llm.run_token_budget }}"></label>
+    <label class="chk"><input type="checkbox" name="no_model"> local scoring only (0 tokens)</label>
+    <button class="primary">Run</button></form>
+  <form class="taskform card" data-kind="ingest"><h3>Ingest <small>free</small></h3>
+    <label>fetch limit <input name="fetch_limit" type="number" min="0" placeholder="all"></label>
+    <p class="hint">Pull every source, dedupe, apply the metadata prefilter, fetch descriptions.</p><button>Ingest</button></form>
+  <form class="taskform card" data-kind="score"><h3>Score <small>free + capped triage</small></h3>
+    <label>max jobs <input name="limit" type="number" min="1" placeholder="all"></label>
+    <label>token budget <input name="budget" type="number" min="0" placeholder="{{ llm.run_token_budget }}"></label>
+    <label class="chk"><input type="checkbox" name="no_model"> local scoring only (0 tokens)</label>
+    <p class="hint">Local score for everything pending; Haiku triage for the ambiguous band until the budget is reached. Leftovers keep their local score.</p><button>Score</button></form>
+  <form class="taskform card" data-kind="deep"><h3>Deep eval <small>~13K tokens for the first, ~2K each after</small></h3>
+    <label>top N fast-scored <input name="top" type="number" min="1" placeholder="e.g. 20"></label>
+    <label>within bucket <select name="bucket"><option value="">any</option><option>likely</option><option>reach</option></select></label>
+    <p class="hint">Full rubric on the best still-to-review jobs. Or tick jobs on the Jobs page and use "Deep eval selected".</p><button>Deep eval top N</button></form>
+  <form class="taskform card" data-kind="evaluate"><h3>Evaluate <small>legacy full rubric, expensive</small></h3>
+    <label>max jobs <input name="limit" type="number" min="1" placeholder="all pending"></label>
+    <p class="hint">The original path: prefilter → triage → full rubric on jobs that have no score at all. After a fast score there is normally nothing left for it.</p><button>Evaluate</button></form>
+  <form class="taskform card" data-kind="rescore"><h3>Rescore</h3>
+    <label>max jobs <input name="limit" type="number" min="1" placeholder="all"></label>
+    <label class="chk"><input type="checkbox" name="recompute_only" checked> recompute buckets only (free)</label>
+    <label class="chk"><input type="checkbox" name="carry_over"> carry scores onto a widened profile</label>
+    <p class="hint">Re-applies weights, thresholds and fast_scoring settings to stored scores. Unticking recompute-only re-evaluates stale jobs with the model.</p><button>Rescore</button></form>
+  <form class="taskform card" data-kind="digest"><h3>Digest <small>free</small></h3><p class="hint">Rewrite today's Markdown digest from current scores.</p><button>Write digest</button></form>
+  <form class="taskform card" data-kind="skills"><h3>Skills <small>model calls</small></h3>
+    <label>postings to mine <input name="limit" type="number" min="1" placeholder="40"></label>
+    <label class="chk"><input type="checkbox" name="no_plan"> demand table only (skip synthesis)</label><button>Mine skills</button></form>
+  <form class="taskform card" data-kind="discover"><h3>Discover <small>~{{ discover_est[0] | k }}–{{ discover_est[1] | k }} tokens, frontier-class</small></h3>
+    <label>angles this run <input name="max_angles" type="number" min="0" placeholder="{{ llm.discovery_max_angles }}"></label>
+    <label>own angle <input name="angle_text" placeholder="optional"></label>
+    <label>similar to <input name="like" placeholder="company, optional"></label>
+    <label>companies per angle <input name="limit" type="number" min="1" placeholder="15"></label>
+    <label class="chk"><input type="checkbox" name="model_resolve"> model fallback for board resolution</label>
+    <p class="hint">Manual only. Default angles rotate: {{ discover_angles }} per press on {{ llm.discovery_model }} / {{ llm.discovery_effort }}.</p><button>Discover</button></form>
+</div>
+
+<section id="livelog" class="{{ 'show' if tasks and tasks[0].status == 'running' }}"><h2>Log <span id="logstatus" class="hint"></span></h2><pre id="logtext"></pre></section>
+
+<h2>History</h2>
+<table><thead><tr><th>When</th><th>Kind</th><th class="n">Seen</th><th class="n">New</th><th class="n">Scored</th><th class="n">Calls</th><th class="n">Tokens in</th><th class="n">Cached</th><th class="n">Out</th><th class="n">Minutes</th><th>Errors</th></tr></thead><tbody>
+{% for h in history %}<tr>
+  <td>{{ h.started_at[:16].replace('T',' ') }}</td><td>{{ h.kind }}</td><td class="n">{{ h.jobs_seen }}</td><td class="n">{{ h.jobs_new }}</td><td class="n">{{ h.jobs_evaluated }}</td><td class="n">{{ h.llm_calls }}</td>
+  <td class="n">{{ '%.0fK' % ((h.llm_input_tokens or 0) / 1000) if h.llm_input_tokens else '' }}</td><td class="n">{{ '%.0fK' % ((h.llm_cache_read_tokens or 0) / 1000) if h.llm_cache_read_tokens else '' }}</td><td class="n">{{ '%.1fK' % ((h.llm_output_tokens or 0) / 1000) if h.llm_output_tokens else '' }}</td>
+  <td class="n">{{ '%.0f' % ((h.llm_ms or 0) / 60000) if h.llm_ms else '' }}</td>
+  <td>{% if h.errors %}<span class="badge warn" title="{{ h.errors | join('&#10;') }}">{{ h.errors | length }}</span>{% endif %}</td>
+</tr>{% endfor %}
+</tbody></table>
+{% if tasks %}<h2>This session</h2><table><tbody>{% for t in tasks %}<tr><td>{{ t.kind }} <span class="mono">{{ t.args | join(' ') }}</span></td><td class="{{ t.status }}">{{ t.status }}</td><td><a href="#" class="showlog" data-id="{{ t.id }}">log</a></td></tr>{% endfor %}</tbody></table>{% endif %}
+{% if digests %}<h2>Digests</h2><p class="hint">{% for d in digests[:14] %}<a href="{{ url_for('digest_view', name=d) }}">{{ d[:-3] }}</a>{% if not loop.last %} · {% endif %}{% endfor %}</p>{% endif %}
+{% endblock %}
+{% block scripts %}<script>{% if tasks and tasks[0].status == 'running' %}JobHub.followLog("{{ tasks[0].id }}");{% endif %}</script>{% endblock %}
