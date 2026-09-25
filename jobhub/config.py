@@ -25,6 +25,7 @@ LLM_CWD = DATA_DIR / "llm_cwd"  # empty cwd so headless claude doesn't auto-load
 PROFILE_YAML = PROFILE_DIR / "profile.yaml"
 PROFILE_MD = PROFILE_DIR / "profile.md"
 COMPANIES_YAML = PROFILE_DIR / "companies.yaml"
+DIRECTORY_CSV = ROOT / "directory" / "board_directory.csv"   # shared company -> job board table, maintained with the code
 
 
 class Dealbreakers(BaseModel):

@@ -14,9 +14,8 @@
   <nav>
     <a href="{{ url_for('index') }}" class="{{ 'on' if request.endpoint in ('index', 'job') }}">Jobs</a>
     <a href="{{ url_for('pipeline_page') }}" class="{{ 'on' if request.endpoint == 'pipeline_page' }}">Pipeline</a>
-    <a href="{{ url_for('companies') }}" class="{{ 'on' if request.endpoint == 'companies' }}">Companies</a>
+    <a href="{{ url_for('companies') }}" class="{{ 'on' if request.endpoint == 'companies' }}">Watchlist</a>
     <a href="{{ url_for('skills') }}" class="{{ 'on' if request.endpoint == 'skills' }}">Skills</a>
-    <a href="{{ url_for('blindspots') }}" class="{{ 'on' if request.endpoint == 'blindspots' }}">Blind spots</a>
     <a href="{{ url_for('runs') }}" class="{{ 'on' if request.endpoint in ('runs', 'digest_view') }}">Runs</a>
     <a href="{{ url_for('settings') }}" class="{{ 'on' if request.endpoint == 'settings' }}">Settings</a>
   </nav>
@@ -25,7 +24,6 @@
     <span title="scored against your current profile: {{ stats.deep }} by the full rubric, the rest by the fast score"><b class="num">{{ stats.evaluated }}</b> scored</span>
     <span class="{{ 'warn' if stats.pending }}" title="new postings waiting for the free local score (Runs → Score)"><b class="num">{{ stats.pending }}</b> to score</span>
     {% if stats.awaiting_model %}<span title="scored locally only; a capped Haiku triage pass would refine them (Runs → Score)"><b class="num">{{ stats.awaiting_model }}</b> unrefined</span>{% endif %}
-    <span title="company boards polled every run"><b class="num">{{ stats.companies_approved }}</b> boards</span>
     <a class="meter {{ stats.budget.level }}" href="{{ url_for('runs') }}" title="input+output tokens recorded in the last 7 days, against llm.weekly_token_budget ({{ stats.budget.week_cap | k if stats.budget.week_cap else 'no cap' }})"><b class="num">{{ stats.budget.week | k }}</b> tokens / 7d{% if stats.budget.week_cap %}<i style="width:{{ stats.budget.pct }}%"></i>{% endif %}</a>
   </div>
 </header>

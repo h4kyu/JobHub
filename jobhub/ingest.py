@@ -24,7 +24,7 @@ ATS_SOURCES = {"greenhouse": GreenhouseSource, "lever": LeverSource, "ashby": As
 
 
 def sync_companies_yaml(conn: sqlite3.Connection) -> int:
-    """Manual seeds from profile/companies.yaml become approved companies."""
+    """Seeds from profile/companies.yaml join the watchlist once; later runs only refresh their details."""
     data = config.load_companies_yaml()
     n = 0
     for c in data.get("companies") or []:
@@ -34,8 +34,10 @@ def sync_companies_yaml(conn: sqlite3.Connection) -> int:
         ats_type = ats_token = None
         if c.get("ats"):
             ats_type, _, ats_token = str(c["ats"]).partition(":")
+        slug = c.get("slug") or slugify(name)
+        existing = db.get_company_by_slug(conn, slug)   # a seed is a first-run default: never re-add what the user removed
         db.upsert_company(
-            conn, slug=c.get("slug") or slugify(name), name=name, source="manual", status="approved",
+            conn, slug=slug, name=name, source="manual", status=existing["status"] if existing else "approved",
             tier=c.get("tier"), rationale=c.get("notes"), ats_type=ats_type or None, ats_token=ats_token or None,
             domain=c.get("domain"), careers_url=c.get("careers_url"),
         )
@@ -76,8 +78,9 @@ def board_from_url(url: str) -> tuple[str, str] | None:
 
 
 def harvest_boards(conn: sqlite3.Connection, log: Callable[[str], None] = print) -> int:
-    """Broad, token-free coverage: any company that has an eligible posting whose URL reveals a Greenhouse/Lever/Ashby
-    board gets that board added to the watchlist (approved, source='harvest'), so its whole board is polled from now on."""
+    """Token-free coverage: any company with an eligible posting whose URL reveals a Greenhouse/Lever/Ashby/Workday
+    board is added to the watchlist (approved, source='harvest') and polled in full from then on. It costs one HTTP
+    call per board, so this stays automatic. A company the user removed (paused/rejected) is never re-added."""
     rows = conn.execute(
         """SELECT DISTINCT j.company_name, j.canonical_url FROM jobs j
            LEFT JOIN companies c ON c.id = j.company_id
@@ -102,7 +105,7 @@ def harvest_boards(conn: sqlite3.Connection, log: Callable[[str], None] = print)
             added += 1
     conn.commit()
     if added:
-        log(f"harvested {added} company boards from job URLs (now polled in full)")
+        log(f"harvested {added} company boards from job URLs (added to the watchlist, now polled in full)")
     return added
 
 

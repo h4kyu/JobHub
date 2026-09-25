@@ -44,11 +44,8 @@ def pipeline_status(conn: sqlite3.Connection) -> dict[str, Any]:
 
     # ---- stage 0/1: sources and ingest
     repos = {r["status"]: r["n"] for r in conn.execute("SELECT status, COUNT(*) n FROM repo_sources GROUP BY status")}
-    companies = {r["status"]: r["n"] for r in conn.execute("SELECT status, COUNT(*) n FROM companies GROUP BY status")}
     polled = _q(conn, "SELECT COUNT(*) FROM companies WHERE status = 'approved' AND ats_token IS NOT NULL AND ats_type IN (%s)"
                 % ",".join("?" * len(POLLABLE)), *POLLABLE)
-    approved_no_board = companies.get("approved", 0) - polled
-    proposed_no_board = _q(conn, "SELECT COUNT(*) FROM companies WHERE status = 'proposed' AND ats_token IS NULL")
     last_ingest = conn.execute("SELECT * FROM runs WHERE kind IN ('ingest', 'run') ORDER BY id DESC LIMIT 1").fetchone()
     active = _q(conn, "SELECT COUNT(*) FROM jobs WHERE active = 1")
     desc = {
@@ -87,10 +84,6 @@ def pipeline_status(conn: sqlite3.Connection) -> dict[str, Any]:
     def limit(level: str, stage: str, text: str, action: str, **kw: Any) -> None:
         limits.append({"level": level, "stage": stage, "text": text, "action": action, **kw})
 
-    if approved_no_board or proposed_no_board:
-        limit("info", "sources", f"{approved_no_board} approved and {proposed_no_board} proposed companies have no job feed we can read, "
-              "so their own postings are only seen if an aggregator list carries them.",
-              "Resolve feeds (free), or check the Blind spots page for the ones nothing reaches us from.", link="blindspots", kind="resolve")
     if desc["pending_fetch"]:
         limit("warn", "ingest", f"{desc['pending_fetch']} postings are waiting for their description to be fetched.",
               "Run Ingest (no fetch limit).", kind="ingest")
@@ -111,8 +104,7 @@ def pipeline_status(conn: sqlite3.Connection) -> dict[str, Any]:
 
     return {
         "phash": phash,
-        "sources": {"repos": repos, "companies": companies, "polled": polled, "approved_no_board": approved_no_board,
-                    "proposed_no_board": proposed_no_board,
+        "sources": {"repos": repos, "polled": polled,
                     "last_ingest": dict(last_ingest) if last_ingest else None},
         "ingest": {"active": active, "desc": desc},
         "prefilter": {"count": fun["rules"], "reasons": [(r["r"], r["n"]) for r in reasons]},

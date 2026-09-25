@@ -35,7 +35,6 @@ the list below it says what, if anything, is keeping jobs from being ingested, s
     {% if l.kind == 'retry' %}<button class="task" data-kind="ingest" data-args='{"retry_unreadable": true}'>Retry fetch</button>{% endif %}
     {% if l.kind == 'score' %}<button class="task" data-kind="score" data-args='{"no_model": true}'>Score now (free)</button>{% endif %}
     {% if l.kind == 'refine' %}<button class="task" data-kind="score" data-args='{}'>Refine (up to {{ llm.run_token_budget | k if llm.run_token_budget else '∞' }})</button><button class="task" data-kind="score" data-args='{"budget": 0}' title="No run cap: spends whatever the remaining ambiguous jobs need">Refine all, no cap</button>{% endif %}
-    {% if l.kind == 'resolve' %}<button class="task" data-kind="resolve" data-args='{}'>Resolve feeds (free)</button>{% endif %}
     {% if l.link %}<a class="badge" href="{{ url_for(l.link) }}">open</a>{% endif %}
     </div></div>
 {% endfor %}
@@ -45,17 +44,12 @@ the list below it says what, if anything, is keeping jobs from being ingested, s
 <div class="stages">
 
 <section class="stage"><header><span class="n">0</span><h3>Sources</h3><span class="cost free">free</span></header>
-  <p class="what">Where postings come from: GitHub internship lists (aggregators) plus the <b>job feeds of individual companies</b>. A company's "feed" is the public page-behind-the-page its careers site is built on (Greenhouse, Lever, Ashby or Workday), which lists <i>all</i> its openings and can be read directly. Companies without a readable feed only show up if an aggregator list carries them.</p>
+  <p class="what">Where postings come from: GitHub internship lists, plus the careers pages of the companies on your <a href="{{ url_for('companies') }}">watchlist</a>, which list all of a company's openings.</p>
   <div class="metrics">
-    <div><b class="num">{{ st.sources.repos.get('active', 0) }}</b><span>aggregator lists active</span></div>
-    <div><b class="num">{{ st.sources.polled }}</b><span>company feeds read every run</span></div>
-    <div class="{{ 'warn' if st.sources.approved_no_board }}"><b class="num">{{ st.sources.approved_no_board }}</b><span>approved, no readable feed</span></div>
-    <div><b class="num">{{ st.sources.proposed_no_board }}</b><span>proposed, no feed</span></div>
+    <div><b class="num">{{ st.sources.repos.get('active', 0) }}</b><span>internship lists active</span></div>
+    <div><b class="num">{{ st.sources.polled }}</b><span>watchlist careers pages read every run</span></div>
   </div>
-  <div class="runbox"><button class="task" data-kind="resolve" data-args='{}'>Resolve missing feeds (free)</button>
-    <a class="badge" href="{{ url_for('companies') }}">Companies &amp; discovery</a> <a class="badge" href="{{ url_for('blindspots') }}">Blind spots</a>
-    <span class="hint">Discovery (finding new companies) spends tokens; it lives on the Companies page.</span></div>
-  {{ knob('llm.discovery_max_angles', 'Discovery angles per press', 'each ≈ 30–80K tokens') }}
+  <div class="runbox"><a class="badge" href="{{ url_for('companies') }}">Edit watchlist</a></div>
 </section>
 
 <section class="stage"><header><span class="n">1</span><h3>Ingest</h3><span class="cost free">free</span></header>

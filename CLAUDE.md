@@ -132,9 +132,8 @@ when testing. `jobhub smoke` is the cheap sanity check.
   URL, and `harvest_boards()` applies it to every company that lacks a board. For Workday this matters more than
   for the others: the `site` segment (`NVIDIAExternalCareerSite`) is unguessable, but it is sitting verbatim in job
   URLs the aggregators already gave us — one ingest turned 135 unpollable companies into polled boards, 107 of them
-  Workday, with zero probing. Prefer extending `board_from_url` over widening `probe_*` slug guesses. The `/blindspots`
-  page lists what remains, separating companies with *zero* postings seen (true blind spots, worth checking by hand)
-  from those still arriving via aggregators.
+  Workday, with zero probing. Prefer extending `board_from_url` over widening `probe_*` slug guesses. Companies with no
+  pollable board are deliberately not surfaced in the UI; their postings arrive through the aggregators.
 - **Company breadth is cheap; be generous.** A board with no matching roles costs one HTTP call per ingest, and
   filtering happens downstream in the prefilter and rubric — so the watchlist is deliberately broad (118 companies,
   98 with boards as of 2026-09-03) rather than curated to the user's niche. New companies are added by probing

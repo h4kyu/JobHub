@@ -20,28 +20,59 @@ const JobHub = (() => {
         .then(() => { document.getElementById("saved").textContent = "saved"; });
       return;
     }
-    const src = e.target.closest("button.src");
-    if (src) { post(`/api/sources/${src.dataset.repo}/${src.dataset.action}`).then(() => location.reload()); return; }
-    const co = e.target.closest("button.co");
-    if (co) { post(`/api/companies/${co.dataset.slug}/${co.dataset.action}`).then(() => location.reload()); return; }
     const task = e.target.closest("button.task");
     if (task) { startTask(task.dataset.kind, JSON.parse(task.dataset.args || "{}")); return; }
     const show = e.target.closest("a.showlog");
     if (show) { e.preventDefault(); followLog(show.dataset.id); }
   });
 
-  const addco = document.getElementById("addco");
-  if (addco) addco.addEventListener("submit", e => {
-    e.preventDefault();
-    const f = new FormData(addco);
-    post("/api/companies", Object.fromEntries(f.entries())).then(r => r.error ? alert(r.error) : location.reload());
+  // Watchlist page: search the company directory, add a result, remove a followed company.
+  const wlq = document.getElementById("wlq"), wlres = document.getElementById("wlresults");
+  if (wlq) {
+    let tag = "", seq = 0, timer0 = null;
+    const note = text => { wlres.replaceChildren(Object.assign(document.createElement("p"), {className: "hint", textContent: text})); };
+    const render = (d, q) => {
+      if (!d.results.length) { note(q ? `We don't recognize “${q}”. Check the spelling.` : "Nothing in that field yet."); return; }
+      const rows = d.results.map(r => {
+        const row = document.createElement("div"); row.className = "wl-row";
+        const name = document.createElement("span"); name.className = "wl-name"; name.textContent = r.name;
+        const tags = document.createElement("span"); tags.className = "wl-tags";
+        r.tags.forEach(t => { const b = document.createElement("span"); b.className = "badge"; b.textContent = t; tags.append(b); });
+        if (!r.in_directory) { const b = document.createElement("span"); b.className = "badge"; b.textContent = "from job lists"; tags.append(b); }
+        const act = document.createElement("button"); act.type = "button";
+        act.textContent = r.on ? "✓ Added" : "Add"; act.disabled = r.on; act.className = r.on ? "ghost" : "primary";
+        act.addEventListener("click", () => {
+          act.disabled = true;
+          post("/api/watchlist", {key: r.key, directory: r.in_directory}).then(res => res.error ? (alert(res.error), act.disabled = false) : location.reload());
+        });
+        row.append(name, tags, act); return row;
+      });
+      if (d.more) rows.push(Object.assign(document.createElement("p"), {className: "hint", textContent: `${d.more} more — type to narrow it down.`}));
+      wlres.replaceChildren(...rows);
+    };
+    const search = () => {
+      const q = wlq.value.trim(), mine = ++seq;
+      if (!q && !tag) { wlres.replaceChildren(); return; }
+      fetch(`/api/directory/search?q=${encodeURIComponent(q)}&tag=${encodeURIComponent(tag)}`).then(r => r.json())
+        .then(d => { if (mine === seq) render(d, q); });
+    };
+    wlq.addEventListener("input", () => { clearTimeout(timer0); timer0 = setTimeout(search, 150); });
+    document.querySelectorAll("#wltags .chip").forEach(c => c.addEventListener("click", () => {
+      tag = tag === c.dataset.tag ? "" : c.dataset.tag;
+      document.querySelectorAll("#wltags .chip").forEach(x => x.classList.toggle("on", x.dataset.tag === tag));
+      search();
+    }));
+  }
+  document.addEventListener("click", e => {
+    const x = e.target.closest("button.wl-x");
+    if (x) post(`/api/watchlist/${x.dataset.slug}/remove`).then(() => location.reload());
   });
-  const disc = document.getElementById("discover");
-  if (disc) disc.addEventListener("submit", e => {
-    e.preventDefault();
-    const f = new FormData(disc);
-    startTask("discover", {angles: [f.get("angle")], like: f.get("like"), max_angles: f.get("max_angles"),
-                           model_resolve: disc.elements.model_resolve.checked}).then(id => { if (id) location.href = "/runs"; });
+  const wlf = document.getElementById("wlfilter");
+  if (wlf) wlf.addEventListener("input", () => {
+    const q = wlf.value.trim().toLowerCase();
+    let n = 0;
+    document.querySelectorAll("#wllist .wl-item").forEach(i => { const show = !q || i.dataset.name.includes(q); i.hidden = !show; n += show; });
+    document.getElementById("wlcount").textContent = n;
   });
 
   // Task forms on the Runs page: every field is an option of the same-named CLI flag.
@@ -52,7 +83,6 @@ const JobHub = (() => {
     const args = {};
     new FormData(f).forEach((v, k) => { if (v !== "") args[k] = v; });
     f.querySelectorAll("input[type=checkbox]").forEach(c => { args[c.name] = c.checked; });
-    if (args.angle_text) { args.angles = [args.angle_text]; delete args.angle_text; }
     startTask(f.dataset.kind, args);
   });
 

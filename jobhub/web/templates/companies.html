@@ -1,51 +1,27 @@
 {% extends "base.html" %}
-{% block title %}Companies — JobHub{% endblock %}
+{% block title %}Watchlist — JobHub{% endblock %}
 {% block body %}
-<div class="toolbar">
-  <form id="discover" class="toolbar">
-    <button class="primary">Discover companies</button>
-    <label>angles <input name="max_angles" type="number" min="0" placeholder="default" style="width:70px"></label>
-    <input name="angle" placeholder="own angle (optional)">
-    <input name="like" placeholder="similar to… (optional)">
-    <label class="chk"><input type="checkbox" name="model_resolve"> model board lookup</label>
-    <span class="hint">Web research on a Sonnet-class model: about 30–80K tokens per angle, three angles per press by default (they rotate, so repeated presses cover the rest). Manual only. Companies with a readable board start being polled automatically; the free slug probe finds most.</span>
-  </form>
-</div>
-<p class="hint">Boards are read in full every run. Most were added automatically from postings already seen (harvest); the rest come from <span class="mono">profile/companies.yaml</span> or discovery.</p>
+<p class="hint lede">Companies you follow. JobHub reads their careers pages directly, on top of the internship lists it already checks, so you see their postings even when a list misses them.</p>
 
-<h2>Aggregator repos <small class="num">{{ repos | selectattr('status', 'equalto', 'active') | list | length }} active</small></h2>
-<p class="hint">GitHub internship lists, read in full every run. New ones are searched for weekly and enabled automatically when they parse; broken ones are retried and shown here.</p>
-<table><thead><tr><th>Repo</th><th>Format</th><th class="n">Stars</th><th class="n">Postings</th><th>Found via</th><th>Status</th><th></th></tr></thead><tbody>
-{% for r in repos %}<tr>
-  <td><a href="https://github.com/{{ r.repo }}" target="_blank" rel="noopener">{{ r.repo }}</a>{% if r.description %}<br><span class="hint">{{ r.description[:110] }}</span>{% endif %}</td>
-  <td>{{ r.kind or '—' }}</td><td class="n">{{ r.stars or '' }}</td><td class="n">{{ r.last_jobs or '' }}</td><td>{{ 'profile.yaml' if r.source == 'config' else 'search' }}</td>
-  <td class="{{ 'done' if r.status == 'active' else ('failed' if r.status == 'broken' else '') }}">{{ r.status }}{% if r.last_error %} <span class="badge warn" title="{{ r.last_error }}">!</span>{% endif %}</td>
-  <td>{% if r.status == 'active' %}<button class="src ghost" data-repo="{{ r.repo }}" data-action="disable">Stop</button>{% else %}<button class="src ghost" data-repo="{{ r.repo }}" data-action="enable">Enable</button>{% endif %}</td>
-</tr>{% endfor %}
-</tbody></table>
+<section class="wl-add">
+  <h2>Add a company</h2>
+  <input type="search" id="wlq" placeholder="Search companies (e.g. NVIDIA, Jane Street)" autocomplete="off">
+  <div class="terms" id="wltags">
+    <span class="lbl">Or browse by field</span>
+    {% for key, label, n in tags %}<button type="button" class="chip" data-tag="{{ key }}">{{ label }}<small class="num">{{ n }}</small></button>{% endfor %}
+  </div>
+  <div id="wlresults" class="wl-results" aria-live="polite"></div>
+</section>
 
-<h2>Polled boards <small class="num">{{ groups.polled | length }}</small></h2>
-<table><thead><tr><th>Company</th><th>Tier</th><th>Board</th><th>Added via</th><th>Why</th><th></th></tr></thead><tbody>
-{% for c in groups.polled %}<tr>
-  <td><b>{{ c.name }}</b></td><td class="n">{{ c.tier or '' }}</td><td class="mono">{{ c.ats_type }}:{{ c.ats_token }}</td><td>{{ c.source }}</td>
-  <td class="why">{{ (c.rationale or '')[:220] }}</td>
-  <td><button class="co ghost" data-slug="{{ c.slug }}" data-action="pause">Stop polling</button></td>
-</tr>{% endfor %}
-</tbody></table>
-
-<h2>Known, no readable board <small class="num">{{ groups.noboard | length }}</small></h2>
-<p class="hint">Their postings still arrive via aggregators and get reputation credit; the site itself can't be polled.</p>
-<table><thead><tr><th>Company</th><th>Tier</th><th>Fit</th><th>Rep</th><th>Careers</th><th>Why</th><th></th></tr></thead><tbody>
-{% for c in groups.noboard %}<tr>
-  <td><b>{{ c.name }}</b></td><td class="n">{{ c.tier or '' }}</td><td class="n">{{ c.fit_score or '' }}</td><td class="n">{{ c.reputation_score or '' }}</td>
-  <td>{% if c.careers_url %}<a href="{{ c.careers_url }}" target="_blank" rel="noopener">open ↗</a>{% endif %}</td>
-  <td class="why">{{ (c.rationale or '')[:220] }}</td>
-  <td><button class="co ghost" data-slug="{{ c.slug }}" data-action="reject">Hide</button></td>
-</tr>{% endfor %}
-</tbody></table>
-
-{% if groups.stopped %}
-<h2>Stopped <small class="num">{{ groups.stopped | length }}</small></h2>
-<table><tbody>{% for c in groups.stopped %}<tr><td><b>{{ c.name }}</b> <span class="hint">{{ c.status }}</span></td><td>{% if c.ats_token %}<span class="mono">{{ c.ats_type }}:{{ c.ats_token }}</span>{% endif %}</td><td><button class="co ghost" data-slug="{{ c.slug }}" data-action="approve">Resume</button></td></tr>{% endfor %}</tbody></table>
-{% endif %}
+<section>
+  <h2>Your watchlist <small class="num" id="wlcount">{{ watched | length }}</small></h2>
+  {% if watched %}
+  <input type="search" id="wlfilter" placeholder="Filter your watchlist" class="wl-filter" autocomplete="off">
+  <div class="wl-list" id="wllist">
+    {% for w in watched %}<span class="wl-item" data-name="{{ w.name | lower }}">{{ w.name }}<button type="button" class="wl-x" data-slug="{{ w.slug }}" title="Remove {{ w.name }}" aria-label="Remove {{ w.name }}">×</button></span>{% endfor %}
+  </div>
+  {% else %}
+  <div class="empty">Nothing here yet. Search above, or browse by field, to follow a company.</div>
+  {% endif %}
+</section>
 {% endblock %}

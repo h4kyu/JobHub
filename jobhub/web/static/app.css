@@ -115,9 +115,6 @@ table.grid th.num, table.grid td.num { text-align: right; font-family: "IBM Plex
 table.grid .small { font-size: .85em; }
 .head { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 
-/* ---- blind spots ---- */
-table.grid tr.blind td { background: color-mix(in srgb, var(--warn, #c60) 7%, transparent); }
-table.grid tr.blind td:first-child { box-shadow: inset 3px 0 0 var(--warn, #c60); }
 .warn { color: var(--warn, #c60); font-weight: 600; }
 
 /* ---- fast-score flow: provenance, budget meter, task panel ---- */
@@ -158,3 +155,14 @@ table.grid tr.blind td:first-child { box-shadow: inset 3px 0 0 var(--warn, #c60)
 .knob input[type=number] { width:120px } .knob input.saved { border-color:var(--ok) }
 .banner { display:flex; flex-wrap:wrap; gap:8px 24px; align-items:center; padding:9px 14px; margin-bottom:12px; background:var(--warn-wash); border:1px solid color-mix(in srgb, var(--warn) 40%, transparent); border-radius:var(--r) } .banner button { margin-left:6px }
 .taskform.runbox { flex-direction:row; flex-wrap:wrap; align-items:center }
+
+/* Watchlist page */
+.wl-add { max-width:820px } .wl-add > input[type=search], .wl-filter { width:100%; max-width:520px }
+.wl-add .terms { margin:12px 0 8px }
+.wl-results { display:flex; flex-direction:column; gap:1px; margin-top:6px; max-width:820px }
+.wl-row { display:flex; align-items:center; gap:12px; padding:8px 12px; background:var(--surface); border:1px solid var(--line); border-radius:var(--r) }
+.wl-name { font-weight:600; min-width:180px } .wl-tags { display:flex; gap:6px; flex-wrap:wrap; flex:1 }
+.wl-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px }
+.wl-item { display:inline-flex; align-items:center; gap:2px; padding:3px 4px 3px 11px; border-radius:14px; border:1px solid var(--line); background:var(--surface); font-size:.9rem }
+.wl-item[hidden] { display:none }
+.wl-x { border:none; background:transparent; color:var(--faint); padding:0 7px; font-size:1.05rem; line-height:1; border-radius:10px } .wl-x:hover { color:var(--bad); background:var(--wash) }

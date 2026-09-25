@@ -11,12 +11,12 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote_plus
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
-from .. import applimits, config, db, fastscore, pipeline, prefilter, roletype
+from .. import applimits, config, db, directory, fastscore, pipeline, prefilter, roletype, watchlist
 from ..models import AppStatus, Bucket
+from ..normalize import slugify
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["JSON_SORT_KEYS"] = False
@@ -30,9 +30,7 @@ def _k(n) -> str:
 
 _TASKS: dict[str, dict] = {}
 _TASK_LOCK = threading.Lock()
-ALLOWED_TASKS = {"ingest", "evaluate", "digest", "run", "rescore", "discover", "skills", "score", "deep", "resolve"}
-# Tasks whose CLI entry is a sub-command rather than the task name.
-CLI_COMMAND = {"resolve": ["companies", "resolve"]}
+ALLOWED_TASKS = {"ingest", "evaluate", "digest", "run", "rescore", "skills", "score", "deep"}
 
 
 # ---------------- helpers ----------------
@@ -60,8 +58,6 @@ def _stats(conn) -> dict:
         "evaluated": q("SELECT COUNT(DISTINCT job_id) FROM evaluations WHERE profile_hash = ? AND hard_reject_reason IS NULL", ph),
         "deep": q("SELECT COUNT(DISTINCT job_id) FROM evaluations WHERE profile_hash = ? AND hard_reject_reason IS NULL "
                   "AND model NOT IN ('prefilter', 'local', 'triage')", ph),
-        "companies_approved": q("SELECT COUNT(*) FROM companies WHERE status = 'approved'"),
-        "companies_proposed": q("SELECT COUNT(*) FROM companies WHERE status = 'proposed'"),
         "last_run": dict(last) if last else None,
         "budget": _budget(conn),
         "last_score": db.uj(db.get_meta(conn, "last_score"), {}) or {},
@@ -147,7 +143,7 @@ def _spawn(kind: str, args: list[str]) -> str:
     logdir = config.DATA_DIR / "logs"
     logdir.mkdir(exist_ok=True)
     logfile = logdir / f"web-{kind}-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
-    cmd = [sys.executable, "-m", "jobhub.cli"] + CLI_COMMAND.get(kind, [kind]) + args
+    cmd = [sys.executable, "-m", "jobhub.cli", kind] + args
     task = {"id": tid, "kind": kind, "args": args, "started": time.time(), "status": "running", "rc": None, "logfile": str(logfile)}
     with _TASK_LOCK:
         _TASKS[tid] = task
@@ -179,6 +175,7 @@ def index():
     unread = request.args.get("unread") == "1"
     sort = request.args.get("sort", "match")
     src = request.args.get("src", "all")            # all | fast (local + triage scored) | deep (full rubric)
+    watch = request.args.get("watch") == "1"        # only companies on the watchlist
     conn = db.connect()
     try:
         db.init_db(conn)
@@ -211,6 +208,9 @@ def index():
             rows = [r for r in rows if r["role"] == role]
         if unread:
             rows = [r for r in rows if r["unread"]]
+        if watch:
+            watched = watchlist.watch_slugs(conn)
+            rows = [r for r in rows if slugify(r["company_name"] or "") in watched]
         if q:
             rows = [r for r in rows if q in (r["company_name"] or "").lower() or q in (r["title"] or "").lower() or q in (r["location"] or "").lower()]
         key = {"likely": lambda r: (r["likelihood"] or 0) * (r["desirability"] or 0), "reach": lambda r: (r["desirability"] or 0, r["likelihood"] or 0),
@@ -227,7 +227,7 @@ def index():
         stats = _stats(conn)
     finally:
         conn.close()
-    return render_template("index.html", rows=rows, bucket=bucket, status=status, term=term, role=role, q=q, unread=unread, sort=sort,
+    return render_template("index.html", rows=rows, bucket=bucket, status=status, term=term, role=role, q=q, unread=unread, sort=sort, watch=watch,
                            src=src, src_counts=src_counts,
                            counts=counts, term_counts=term_counts, term_labels=_term_labels(profile),
                            role_counts=role_counts, role_labels={"all": "All types", **roletype.LABELS},
@@ -287,91 +287,18 @@ def skills():
                            tasks=_running_tasks())
 
 
-#: ATS families we can poll in full. Anything else means the company's board is invisible to JobHub.
-POLLABLE = ("greenhouse", "lever", "ashby", "workday")
-
-#: Recognisable portal hosts -> why we can't poll them, so the page explains rather than just listing.
-_PORTAL_NOTES = [
-    ("myworkdayjobs", "Workday — should auto-resolve; check the job URL"),
-    ("icims.com", "iCIMS — no public board API"),
-    ("oraclecloud.com", "Oracle HCM — REST finder syntax varies per tenant"),
-    ("eightfold.ai", "Eightfold — no public board API"),
-    ("avature.net", "Avature — no public board API"),
-    ("smartrecruiters", "SmartRecruiters — has a public API, not implemented yet"),
-    ("workable.com", "Workable — has a public API, not implemented yet"),
-    ("taleo.net", "Taleo"), ("successfactors", "SAP SuccessFactors"), ("phenom", "Phenom"),
-]
-
-
-@app.route("/blindspots")
-def blindspots():
-    """Companies we cannot poll. The ones with zero postings seen are true blind spots — nothing about
-    them reaches the pipeline at all, so they are the only ones that actually need checking by hand."""
-    from urllib.parse import urlsplit
-
-    profile = config.load_profile()
-    terms = " OR ".join(f'"{t}"' for t in [profile.term] + list(profile.term_also_accept) + list(profile.alt_terms))
-    conn = db.connect()
-    try:
-        db.init_db(conn)
-        seen: dict[str, dict] = {}
-        for r in conn.execute("SELECT company_name, canonical_url FROM jobs WHERE active = 1"):
-            e = seen.setdefault(r["company_name"], {"n": 0, "hosts": {}, "url": None})
-            e["n"] += 1
-            if r["canonical_url"]:
-                h = urlsplit(r["canonical_url"]).netloc.lower()
-                e["hosts"][h] = e["hosts"].get(h, 0) + 1
-                e["url"] = e["url"] or r["canonical_url"]
-        rows = []
-        for c in db.list_companies(conn):
-            if c["ats_type"] in POLLABLE and c["ats_token"]:
-                continue
-            if c["status"] in ("rejected", "paused"):
-                continue
-            e = seen.get(c["name"], {"n": 0, "hosts": {}, "url": None})
-            host = max(e["hosts"], key=e["hosts"].get) if e["hosts"] else None
-            note = next((n for pat, n in _PORTAL_NOTES if host and pat in host), None)
-            rows.append({
-                "name": c["name"], "tier": c["tier"], "status": c["status"], "postings": e["n"],
-                "host": host, "note": note or ("custom careers portal" if host else None),
-                "careers_url": c["careers_url"], "posting_url": e["url"],
-                "search": f"https://www.google.com/search?q={quote_plus(c['name'] + ' internships careers ' + terms)}",
-                "blind": e["n"] == 0,
-            })
-        # True blind spots first, then by tier, then by how much we are missing.
-        rows.sort(key=lambda r: (not r["blind"], r["tier"] or 9, -r["postings"], r["name"].lower()))
-        stats = _stats(conn)
-    finally:
-        conn.close()
-    return render_template("blindspots.html", rows=rows, stats=stats, tasks=_running_tasks(),
-                           n_blind=sum(1 for r in rows if r["blind"]),
-                           n_partial=sum(1 for r in rows if not r["blind"]))
-
-
 @app.route("/companies")
 def companies():
+    """The watchlist: companies whose careers pages are read directly. Adding goes through the directory search."""
     conn = db.connect()
     try:
         db.init_db(conn)
-        rows = [dict(r) for r in db.list_companies(conn)]
-        for r in rows:
-            r["work_areas"] = db.uj(r.get("work_areas"), []) or []
+        watched = watchlist.list_watchlist(conn)
         stats = _stats(conn)
     finally:
         conn.close()
-    conn = db.connect()
-    try:
-        repos = [dict(r) for r in db.list_repo_sources(conn)]
-    finally:
-        conn.close()
-    groups = {
-        "polled": [r for r in rows if r["status"] == "approved" and r["ats_token"]],
-        "noboard": [r for r in rows if r["status"] in ("approved", "proposed") and not r["ats_token"]],
-        "stopped": [r for r in rows if r["status"] in ("paused", "rejected")],
-    }
-    groups["polled"].sort(key=lambda r: (r["tier"] or 9, r["name"].lower()))
-    groups["noboard"].sort(key=lambda r: (r["tier"] or 9, -(r["fit_score"] or 0), r["name"].lower()))
-    return render_template("companies.html", groups=groups, repos=repos, stats=stats, tasks=_running_tasks())
+    tags = [(k, roletype.LABELS.get(k, k), n) for k, n in sorted(directory.tag_counts().items(), key=lambda kv: -kv[1])]
+    return render_template("companies.html", watched=watched, tags=tags, stats=stats, tasks=_running_tasks())
 
 
 @app.route("/runs")
@@ -387,13 +314,8 @@ def runs():
     finally:
         conn.close()
     digests = sorted((p.name for p in config.DIGESTS_DIR.glob("*.md")), reverse=True) if config.DIGESTS_DIR.exists() else []
-    from ..discover import estimate_tokens
-
-    llm = config.load_profile().llm
-    n = llm.discovery_max_angles or 13
-    discover_est = estimate_tokens(n)
     return render_template("runs.html", history=history, stats=stats, tasks=_running_tasks(), digests=digests,
-                           by_kind=by_kind, llm=llm, discover_est=discover_est, discover_angles=n)
+                           by_kind=by_kind, llm=config.load_profile().llm)
 
 
 def _flatten(prefix: str, obj) -> list[tuple[str, str]]:
@@ -501,54 +423,42 @@ def api_status():
     return jsonify({"ok": True})
 
 
-@app.post("/api/companies/<slug>/<action>")
-def api_company(slug: str, action: str):
-    status = {"approve": "approved", "reject": "rejected", "pause": "paused", "propose": "proposed"}.get(action)
-    if not status:
-        return jsonify({"error": "bad action"}), 400
+@app.get("/api/directory/search")
+def api_directory_search():
     conn = db.connect()
     try:
-        ok = db.set_company_status(conn, slug, status)
-        conn.commit()
+        db.init_db(conn)
+        return jsonify(watchlist.suggest(conn, request.args.get("q", ""), request.args.get("tag") or None))
+    finally:
+        conn.close()
+
+
+@app.post("/api/watchlist")
+def api_watchlist_add():
+    data = request.get_json(force=True)
+    conn = db.connect()
+    try:
+        db.init_db(conn)
+        try:
+            if data.get("directory") is False:
+                slug = watchlist.add_known(conn, (data.get("key") or "").strip())
+            else:
+                slug = watchlist.add_directory(conn, data.get("key") or "")
+        except watchlist.NotFound:
+            return jsonify({"error": "We don't recognize that company. Check the spelling."}), 404
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "slug": slug})
+
+
+@app.post("/api/watchlist/<slug>/remove")
+def api_watchlist_remove(slug: str):
+    conn = db.connect()
+    try:
+        ok = watchlist.remove(conn, slug)
     finally:
         conn.close()
     return jsonify({"ok": ok})
-
-
-@app.post("/api/sources/<path:repo>/<action>")
-def api_source(repo: str, action: str):
-    status = {"disable": "disabled", "enable": "active"}.get(action)
-    if not status:
-        return jsonify({"error": "bad action"}), 400
-    conn = db.connect()
-    try:
-        conn.execute("UPDATE repo_sources SET status = ? WHERE repo = ?", (status, repo))
-        conn.commit()
-    finally:
-        conn.close()
-    return jsonify({"ok": True})
-
-
-@app.post("/api/companies")
-def api_company_add():
-    from ..normalize import slugify
-
-    data = request.get_json(force=True)
-    name = (data.get("name") or "").strip()
-    if not name:
-        return jsonify({"error": "name required"}), 400
-    ats_type = ats_token = None
-    if data.get("ats"):
-        ats_type, _, ats_token = str(data["ats"]).partition(":")
-    conn = db.connect()
-    try:
-        db.upsert_company(conn, slug=slugify(name), name=name, source="manual", status="approved",
-                          tier=int(data["tier"]) if data.get("tier") else None, ats_type=ats_type or None, ats_token=ats_token or None,
-                          careers_url=data.get("careers_url") or None)
-        conn.commit()
-    finally:
-        conn.close()
-    return jsonify({"ok": True, "slug": slugify(name)})
 
 
 @app.post("/api/tasks/<kind>")
@@ -565,8 +475,6 @@ def api_task(kind: str):
         args += ["--fetch-limit", str(num("fetch_limit"))]
     if kind == "ingest" and data.get("retry_unreadable"):
         args += ["--retry-unreadable"]
-    if kind == "resolve":
-        args += ["--use-model" if data.get("use_model") else "--no-use-model"]
     if kind in ("evaluate", "rescore", "run", "score") and data.get("limit"):
         args += ["--limit", str(int(data["limit"]))]
     if kind in ("run", "score"):
@@ -592,18 +500,6 @@ def api_task(kind: str):
             args += ["--limit", str(int(data["limit"]))]
         if data.get("no_plan"):
             args += ["--no-plan"]
-    if kind == "discover":
-        for a in data.get("angles") or []:
-            if a and a.strip():
-                args += ["--angle", a.strip()]
-        if data.get("like"):
-            args += ["--like", str(data["like"])]
-        if data.get("limit"):
-            args += ["--limit", str(int(data["limit"]))]
-        if num("max_angles") is not None:
-            args += ["--max-angles", str(num("max_angles"))]
-        if data.get("model_resolve"):
-            args += ["--model-resolve"]
     return jsonify({"id": _spawn(kind, args)})
 
 

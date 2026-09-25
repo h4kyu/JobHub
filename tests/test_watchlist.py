@@ -1,0 +1,98 @@
+import pytest
+
+from jobhub import config, db, directory, ingest, watchlist
+
+
+CSV = """slug,name,aliases,ats_type,ats_token,status,jobs_at_check,tags,tier,reputation,domain,careers_url,verified_at,notes
+nxp,NXP,NXP Semiconductors,workday,nxp/wd3/Careers,ok,10,hardware|ml,2,,,,2026-09-25,
+acme,Acme Robotics,,greenhouse,acme,ok,3,robotics,,,,,2026-09-25,
+gone,Gone Co,,greenhouse,gone,dead,,ml,,,,,2026-09-25,
+hrt,Hudson River Trading,,,,no_feed,,quant,1,,,,,
+"""
+
+
+@pytest.fixture
+def conn(tmp_path, monkeypatch):
+    csv = tmp_path / "dir.csv"
+    csv.write_text(CSV)
+    monkeypatch.setattr(config, "DIRECTORY_CSV", csv)
+    monkeypatch.setattr(config, "DB_PATH", tmp_path / "t.db")
+    monkeypatch.setattr(config, "DATA_DIR", tmp_path)
+    for fn in (directory.load, directory._by_slug, directory._by_board):
+        fn.cache_clear()
+    with db.session() as c:
+        yield c
+    for fn in (directory.load, directory._by_slug, directory._by_board):
+        fn.cache_clear()
+
+
+def add_job(conn, company):
+    db.insert_job(conn, dedup_key=company, company_name=company, title="Intern", location="",
+                  canonical_url=f"https://x.com/{company}", source="simplify:x", description_text="d")
+
+
+def test_search_ranks_exact_then_prefix_and_matches_aliases(conn):
+    assert [e.name for e in directory.search("nxp semi")] == ["NXP"]
+    assert [e.name for e in directory.search("", "robotics")] == ["Acme Robotics"]
+    assert directory.search("zzz") == []
+
+
+def test_only_live_boards_are_pollable(conn):
+    by = {e.slug: e for e in directory.load()}
+    assert by["nxp"].pollable and not by["gone"].pollable and not by["hrt"].pollable
+
+
+def test_add_directory_entry_polls_its_board_and_remove_stops_it(conn):
+    slug = watchlist.add_directory(conn, "acme")
+    row = db.get_company_by_slug(conn, slug)
+    assert (row["status"], row["ats_type"], row["ats_token"]) == ("approved", "greenhouse", "acme")
+    assert [c["slug"] for c in db.list_companies(conn, status="approved")] == ["acme"]
+    assert watchlist.remove(conn, slug)
+    assert db.list_companies(conn, status="approved") == []
+
+
+def test_adding_reuses_the_existing_row_for_an_alias(conn):
+    db.upsert_company(conn, slug="nxp-semiconductors", name="NXP Semiconductors", source="harvest", status="proposed",
+                      ats_type="workday", ats_token="nxp/wd3/Careers")
+    assert watchlist.add_directory(conn, "nxp") == "nxp-semiconductors"
+    assert len(db.list_companies(conn)) == 1
+
+
+def test_dead_or_missing_board_follows_via_lists_only(conn):
+    watchlist.add_directory(conn, "gone")
+    watchlist.add_directory(conn, "hrt")
+    rows = {r["slug"]: r for r in db.list_companies(conn, status="approved")}
+    assert rows["gone"]["ats_token"] is None and rows["hrt"]["ats_token"] is None
+    assert ingest.build_sources(conn) is not None  # nothing to poll for either, and nothing breaks
+
+
+def test_unknown_company_is_refused_but_one_seen_in_job_lists_is_allowed(conn):
+    with pytest.raises(watchlist.NotFound):
+        watchlist.add_known(conn, "Typo Corp")
+    add_job(conn, "Small Startup")
+    slug = watchlist.add_known(conn, "Small Startup")
+    assert db.get_company_by_slug(conn, slug)["status"] == "approved"
+    assert {n["name"] for n in watchlist.suggest(conn, "small")["results"]} == {"Small Startup"}
+
+
+def test_suggest_marks_watched_and_hides_directory_names_from_job_list_matches(conn):
+    add_job(conn, "NXP Semiconductors")
+    watchlist.add_directory(conn, "nxp")
+    res = watchlist.suggest(conn, "nxp")["results"]
+    assert [(r["name"], r["on"], r["in_directory"]) for r in res] == [("NXP", True, True)]
+
+
+def test_seed_and_harvest_add_new_companies_but_never_bring_back_a_removed_one(conn, monkeypatch):
+    monkeypatch.setattr(config, "load_companies_yaml", lambda: {"companies": [{"name": "Seedy", "ats": "greenhouse:seedy"}]})
+    ingest.sync_companies_yaml(conn)
+    assert db.get_company_by_slug(conn, "seedy")["status"] == "approved"
+    watchlist.remove(conn, "seedy")
+    ingest.sync_companies_yaml(conn)
+    assert db.get_company_by_slug(conn, "seedy")["status"] == "paused"
+    db.insert_job(conn, dedup_key="h", company_name="Harvested", title="Intern", location="",
+                  canonical_url="https://boards.greenhouse.io/harvested/jobs/1", source="simplify:x", description_text=None)
+    ingest.harvest_boards(conn, log=lambda *_: None)
+    assert db.get_company_by_slug(conn, "harvested")["status"] == "approved"
+    watchlist.remove(conn, "harvested")
+    ingest.harvest_boards(conn, log=lambda *_: None)
+    assert db.get_company_by_slug(conn, "harvested")["status"] == "paused"

@@ -55,13 +55,6 @@
   <form class="taskform card" data-kind="skills"><h3>Skills <small>model calls</small></h3>
     <label>postings to mine <input name="limit" type="number" min="1" placeholder="40"></label>
     <label class="chk"><input type="checkbox" name="no_plan"> demand table only (skip synthesis)</label><button>Mine skills</button></form>
-  <form class="taskform card" data-kind="discover"><h3>Discover <small>~{{ discover_est[0] | k }}–{{ discover_est[1] | k }} tokens, frontier-class</small></h3>
-    <label>angles this run <input name="max_angles" type="number" min="0" placeholder="{{ llm.discovery_max_angles }}"></label>
-    <label>own angle <input name="angle_text" placeholder="optional"></label>
-    <label>similar to <input name="like" placeholder="company, optional"></label>
-    <label>companies per angle <input name="limit" type="number" min="1" placeholder="15"></label>
-    <label class="chk"><input type="checkbox" name="model_resolve"> model fallback for board resolution</label>
-    <p class="hint">Manual only. Default angles rotate: {{ discover_angles }} per press on {{ llm.discovery_model }} / {{ llm.discovery_effort }}.</p><button>Discover</button></form>
 </div>
 
 <section id="livelog" class="{{ 'show' if tasks and tasks[0].status == 'running' }}"><h2>Log <span id="logstatus" class="hint"></span></h2><pre id="logtext"></pre></section>

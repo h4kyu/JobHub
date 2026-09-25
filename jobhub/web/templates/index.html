@@ -11,7 +11,7 @@
 <form class="filters" method="get">
   <div class="tabs">
     {% for b, label in [('likely','Likely'),('reach','Reach'),('wildcard','Wildcard'),('archive','Archive'),('all','All')] %}
-      <a class="tab {{ 'on' if bucket == b }}" href="{{ url_for('index', bucket=b, status=status, term=term, role=role, q=q, sort=sort, src=src, unread=('1' if unread else None)) }}">{{ label }}{% if b != 'all' %}<small class="num">{{ counts.get(b, 0) }}</small>{% endif %}</a>
+      <a class="tab {{ 'on' if bucket == b }}" href="{{ url_for('index', bucket=b, status=status, term=term, role=role, q=q, sort=sort, src=src, unread=('1' if unread else None), watch=('1' if watch else None)) }}">{{ label }}{% if b != 'all' %}<small class="num">{{ counts.get(b, 0) }}</small>{% endif %}</a>
     {% endfor %}
   </div>
   <input type="hidden" name="bucket" value="{{ bucket }}">
@@ -24,6 +24,7 @@
     <option value="all" {{ 'selected' if status == 'all' }}>Everything</option>
   </select>
   <label class="chk"><input type="checkbox" name="unread" value="1" {{ 'checked' if unread }} onchange="this.form.submit()"> needs manual check</label>
+  <label class="chk"><input type="checkbox" name="watch" value="1" {{ 'checked' if watch }} onchange="this.form.submit()"> watchlist only</label>
   <select name="sort" onchange="this.form.submit()">
     <option value="match" {{ 'selected' if sort == 'match' }}>Sort: best match</option>
     <option value="newest" {{ 'selected' if sort == 'newest' }}>Sort: newest posted</option>
@@ -39,7 +40,7 @@
 <div class="terms">
   <span class="lbl">Work term</span>
   {% for t in ['all', 'primary', 'alt'] %}
-    <a class="chip {{ 'on' if term == t }}" href="{{ url_for('index', bucket=bucket, status=status, term=t, role=role, q=q, sort=sort, src=src, unread=('1' if unread else None)) }}">{{ term_labels[t] }}<small class="num">{{ term_counts.get(t, 0) }}</small></a>
+    <a class="chip {{ 'on' if term == t }}" href="{{ url_for('index', bucket=bucket, status=status, term=t, role=role, q=q, sort=sort, src=src, unread=('1' if unread else None), watch=('1' if watch else None)) }}">{{ term_labels[t] }}<small class="num">{{ term_counts.get(t, 0) }}</small></a>
   {% endfor %}
   {% if term != 'all' %}<span class="hint">postings that never state a term are listed under both.</span>{% endif %}
 </div>
@@ -48,7 +49,7 @@
 <div class="terms">
   <span class="lbl">Scored by</span>
   {% for k, label in [('all', 'Everything'), ('fast', 'Fast score'), ('deep', 'Deep eval')] %}
-    <a class="chip {{ 'on' if src == k }}" href="{{ url_for('index', bucket=bucket, status=status, term=term, role=role, q=q, sort=sort, src=k, unread=('1' if unread else None)) }}">{{ label }}<small class="num">{{ src_counts.get(k, 0) }}</small></a>
+    <a class="chip {{ 'on' if src == k }}" href="{{ url_for('index', bucket=bucket, status=status, term=term, role=role, q=q, sort=sort, src=k, unread=('1' if unread else None), watch=('1' if watch else None)) }}">{{ label }}<small class="num">{{ src_counts.get(k, 0) }}</small></a>
   {% endfor %}
   {% if src != 'deep' %}<span class="hint">fast = free local score, refined by a capped Haiku pass when ambiguous; deep = full rubric (⚡, on demand).</span>{% endif %}
 </div>
@@ -56,7 +57,7 @@
 <div class="terms">
   <span class="lbl">Role type</span>
   {% for k, label in role_labels.items() if k == 'all' or role_counts.get(k) or role == k %}
-    <a class="chip {{ 'on' if role == k }}" href="{{ url_for('index', bucket=bucket, status=status, term=term, role=k, q=q, sort=sort, src=src, unread=('1' if unread else None)) }}">{{ label }}<small class="num">{{ role_counts.get(k, 0) }}</small></a>
+    <a class="chip {{ 'on' if role == k }}" href="{{ url_for('index', bucket=bucket, status=status, term=term, role=k, q=q, sort=sort, src=src, unread=('1' if unread else None), watch=('1' if watch else None)) }}">{{ label }}<small class="num">{{ role_counts.get(k, 0) }}</small></a>
   {% endfor %}
 </div>
 
