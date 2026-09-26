@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 from functools import lru_cache
 from pathlib import Path
@@ -240,6 +241,92 @@ EDITABLE_KNOBS: dict[str, type] = {
     "fast_scoring.reach_min": int, "fast_scoring.digest_cap": int, "fast_scoring.triage_weight": float,
     "fast_scoring.unread_to_triage": bool,
 }
+
+
+#: Profile constraints the UI may edit. Unlike EDITABLE_KNOBS these ARE model-visible, so saving one
+#: changes `profile_hash` and everything gets re-scored — free, but the UI has to say so.
+#: value = (kind, is_model_visible)
+PROFILE_FIELDS: dict[str, tuple[str, bool]] = {
+    "term": ("str", True),
+    "term_also_accept": ("list", True),
+    "alt_terms": ("list", True),
+    "locations": ("list", True),
+    "remote_ok": ("bool", True),
+    "strict_location": ("bool", True),
+    "work_authorization": ("list", True),
+    "roles": ("list", True),
+    "dealbreakers.unpaid": ("list", False),
+    "dealbreakers.clearance": ("list", False),
+    "dealbreakers.citizenship": ("list", False),
+    "dealbreakers.level": ("list", False),
+    "dealbreakers.location_exclude": ("list", False),
+    "dealbreakers.other": ("list", False),
+}
+
+
+def _yaml_scalar(v: Any) -> str:
+    return "true" if v is True else "false" if v is False else json.dumps(str(v))
+
+
+def set_profile_field(dotted: str, raw: Any) -> Any:
+    """Rewrite one profile constraint in profile.yaml, keeping the file's comments.
+
+    Lists are always written as a single flow sequence (`["a", "b"]`) — profile.yaml already mixes
+    flow and block style, and collapsing to one line is what makes replacing a block list safe.
+    The whole profile is re-validated and rolled back if the edit produces something invalid.
+    """
+    import re
+
+    if dotted not in PROFILE_FIELDS:
+        raise KeyError(f"{dotted} is not editable from the UI")
+    kind, _visible = PROFILE_FIELDS[dotted]
+    if kind == "bool":
+        value: Any = raw if isinstance(raw, bool) else str(raw).strip().lower() in ("1", "true", "yes", "on")
+        text = _yaml_scalar(value)
+    elif kind == "list":
+        items = raw if isinstance(raw, list) else [p.strip() for p in str(raw).split(",")]
+        value = [str(i).strip() for i in items if str(i).strip()]
+        text = "[" + ", ".join(json.dumps(i) for i in value) + "]"
+    else:
+        value = str(raw).strip()
+        text = _yaml_scalar(value)
+
+    parts = dotted.split(".")
+    lines = PROFILE_YAML.read_text().splitlines(keepends=True)
+    original = "".join(lines)
+
+    if len(parts) == 1:
+        key, indent, lo, hi = parts[0], "", 0, len(lines)
+    else:                                   # one level down, e.g. dealbreakers.other
+        parent, key = parts
+        lo = next((i for i, l in enumerate(lines) if re.match(rf"^{parent}:\s*(#.*)?$", l)), None)
+        if lo is None:
+            raise KeyError(f"section {parent}: not found in profile.yaml")
+        lo += 1
+        hi = next((i for i in range(lo, len(lines))
+                   if lines[i].strip() and not lines[i].startswith((" ", "\t"))), len(lines))
+        indent = "  "
+
+    at = next((i for i in range(lo, hi) if re.match(rf"^{indent}{re.escape(key)}:", lines[i])), None)
+    if at is None:
+        raise KeyError(f"{dotted} not found in profile.yaml")
+
+    m = re.match(rf"^({indent}{re.escape(key)}:)([^#\n]*)(#.*)?(\r?\n?)$", lines[at])
+    comment = f"   {m.group(3)}" if m and m.group(3) else ""
+    end = at + 1                            # swallow a block list so it cannot survive as duplicate entries
+    while end < hi and re.match(rf"^{indent}\s+-\s", lines[end]):
+        end += 1
+    lines[at:end] = [f"{indent}{key}: {text}{comment}\n"]
+
+    PROFILE_YAML.write_text("".join(lines))
+    load_profile.cache_clear()
+    try:
+        load_profile()
+    except Exception:
+        PROFILE_YAML.write_text(original)
+        load_profile.cache_clear()
+        raise
+    return value
 
 
 def set_profile_value(dotted: str, raw: Any) -> Any:

@@ -182,6 +182,34 @@ when testing. `jobhub smoke` is the cheap sanity check.
 - **Web UI** (`jobhub/web/app.py`, Flask + Jinja, no build step): reads/writes the same SQLite DB; long commands are
   launched as `python -m jobhub.cli <cmd>` subprocesses (one at a time) with logs under `data/logs/web-*.log`,
   polled by `/api/tasks/<id>/log`. Templates in `jobhub/web/templates/`, assets in `jobhub/web/static/`.
+  **Layout is a left rail plus a content column** (`base.html` → `.shell` / `.rail` / `main`); there is no top header.
+  Routes: `/` home dashboard, `/jobs` the list (was `/`), `/applications`, `/job/<id>`, `/profile`, `/companies`,
+  `/pipeline` (titled "Engine"), `/settings`. `url_for('index')` is gone — it is `url_for('jobs')`.
+  The jobs header is one toolbar (`.jbar`: bucket tabs, search, sort, Filters, deep-eval) with everything else in a
+  drawer (`.jdrawer`) that opens itself only when a filter is active. Engine is one screen: a horizontal stage rail
+  (`.erail`/`.est`) over a two-column body with the live log parked sticky on the right (`.elog`).
+  **Class-name trap:** the pipeline's blocker rows are `.blocker`, *not* `.limit` — `.badge.limit` on job cards
+  would otherwise inherit its 10px padding and render a head taller than its neighbours.
+- **Profile vs Settings.** `/profile` edits the constraints that decide what gets scored; `/settings` holds the theme
+  picker, the non-model-visible knobs and the read-only dump. Editable constraints are whitelisted in
+  `config.PROFILE_FIELDS` (`{dotted: (kind, model_visible)}`) and written by `config.set_profile_field`, which
+  rewrites one key in place keeping comments, collapses block lists to flow style so a replaced list cannot survive
+  as stray `- ` entries, and rolls the file back if the result fails validation. Fields flagged model-visible change
+  `profile_hash`, so the UI marks them "re-scores" — that is the same distinction `EDITABLE_KNOBS` exists to avoid.
+- **Home** (`/`, `jobhub/home.py`): five cards — To review, Profile, Jobs, Applications, Deadlines. `home_data()`
+  takes the *same* decorated rows the jobs page builds (`_all_rows`), so the two can never disagree on a count.
+  "New since last visit" is `first_seen_at` against `meta.last_visit`, which `/` stamps **after** reading, so a
+  posting is never marked seen before you could have seen it. Deadlines look `DEADLINE_WINDOW_DAYS` (14) ahead and
+  render as date tiles; there is deliberately no separate deadlines page. Note `db.set_meta` does **not** commit —
+  callers must (`stamp_visit` does).
+- **Themes** (`jobhub/web/themes.py`, 14 of them): every colour in `app.css` is a CSS custom property; nothing
+  hardcodes a hue. `/static/themes.css` is generated from the module at request time, so adding a palette means
+  adding one dict and nothing else. The choice lives in `meta.theme` (not localStorage) so the CLI and browser agree,
+  and is applied server-side as `<html data-theme>` — no flash. Palettes were built in OKLCH: roles first (canvas,
+  surface, ink, action, alarm, data categories), chroma tapered at the lightness extremes, then verified. Two house
+  floors beyond WCAG AA keep a theme from losing its edges: **card border ≥ 1.66:1 against the card, card ≥ 1.17:1
+  against the page** — dark themes fail the second one easily, which is what makes them look edgeless.
+  `tests/test_home.py` asserts all of this per theme, so an illegible palette cannot ship.
 
 ## Known gaps
 

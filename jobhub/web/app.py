@@ -11,12 +11,14 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
-from .. import applimits, config, db, directory, fastscore, pipeline, prefilter, roletype, watchlist
+from .. import applimits, config, db, directory, fastscore, home as homedata, pipeline, prefilter, roletype, watchlist
 from ..models import AppStatus, Bucket
 from ..normalize import slugify
+from . import themes
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.config["JSON_SORT_KEYS"] = False
@@ -52,7 +54,14 @@ def _stats(conn) -> dict:
     last = conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
     awaiting = fastscore.count_ambiguous(conn, ph)
     last_score = db.uj(db.get_meta(conn, "last_score"), {}) or {}
+    in_flight = q("SELECT COUNT(*) FROM applications WHERE status IN ('shortlisted','applied','interview','offer')")
+    unreviewed = q("SELECT COUNT(*) FROM evaluations e JOIN jobs j ON j.id = e.job_id "
+                   "LEFT JOIN applications a ON a.job_id = e.job_id "
+                   "WHERE e.profile_hash = ? AND e.hard_reject_reason IS NULL AND j.active = 1 "
+                   "AND e.bucket IN ('likely','reach') AND COALESCE(a.status, 'new') = 'new'", ph)
     return {
+        "in_flight": in_flight,
+        "unreviewed": unreviewed,
         "active": q("SELECT COUNT(*) FROM jobs WHERE active = 1"),
         "with_text": q("SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text IS NOT NULL AND description_text != ''"),
         "pending": pending,
@@ -166,10 +175,93 @@ def _spawn(kind: str, args: list[str]) -> str:
     return tid
 
 
+# ---------------- theme ----------------
+
+def _theme(conn=None) -> str:
+    if conn is not None:
+        return themes.resolve(db.get_meta(conn, "theme"))
+    c = db.connect()
+    try:
+        return themes.resolve(db.get_meta(c, "theme"))
+    finally:
+        c.close()
+
+
+@app.context_processor
+def _inject_theme() -> dict:
+    """Every page needs it and no route should have to remember to pass it."""
+    return {"theme": _theme()}
+
+
+@app.route("/static/themes.css")
+def themes_css():
+    """Generated from web/themes.py so a new palette needs no CSS edit."""
+    return themes.css(), 200, {"Content-Type": "text/css; charset=utf-8", "Cache-Control": "no-cache"}
+
+
+@app.post("/api/theme")
+def api_theme():
+    key = str((request.get_json(force=True) or {}).get("theme", ""))
+    if key not in themes.THEMES:
+        return jsonify({"error": f"unknown theme {key!r}"}), 400
+    conn = db.connect()
+    try:
+        db.init_db(conn)
+        db.set_meta(conn, "theme", key)
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "theme": key})
+
+
 # ---------------- pages ----------------
 
+def _all_rows(conn) -> list[dict]:
+    """Every current evaluation, decorated the way the cards expect. One pass, shared by home and jobs."""
+    rv, ph = config.RUBRIC_VERSION, config.profile_hash()
+    rows = [_row(r) for r in db.latest_evaluations(conn, rv, ph, include_handled=True)]
+    limits, used = applimits.cached_company_limits(conn), applimits.submitted_counts(conn)
+    for r in rows:
+        r["app_limit"] = _app_limit(limits, used, r["company_name"])
+    return rows
+
+
 @app.route("/")
-def index():
+def home():
+    """The front door: what changed, what is open, what is in flight, what closes soon."""
+    conn = db.connect()
+    try:
+        db.init_db(conn)
+        stats = _stats(conn)
+        data = homedata.home_data(conn, rows=_all_rows(conn), stats=stats)
+        homedata.stamp_visit(conn)   # after reading, so "since" covers this visit's arrivals
+    finally:
+        conn.close()
+    return render_template("home.html", home=data, stats=stats, window=homedata.DEADLINE_WINDOW_DAYS,
+                           tasks=_running_tasks())
+
+
+@app.route("/applications")
+def applications():
+    """Everything you have acted on, grouped by where it stands."""
+    conn = db.connect()
+    try:
+        db.init_db(conn)
+        rows = [r for r in _all_rows(conn) if r["app_status"] != "new"]
+        stats = _stats(conn)
+    finally:
+        conn.close()
+    order = ["shortlisted", "applied", "interview", "offer", "rejected", "closed", "skipped"]
+    groups = [(s, [r for r in rows if r["app_status"] == s]) for s in order]
+    for _, g in groups:
+        g.sort(key=lambda r: ((r["deadline"] is None), r["deadline"] or "", -(r["likelihood"] or 0)))
+    return render_template("applications.html", groups=[(s, g) for s, g in groups if g],
+                           total=len(rows), stats=stats, statuses=[s.value for s in AppStatus],
+                           tasks=_running_tasks())
+
+
+@app.route("/jobs")
+def jobs():
     bucket = request.args.get("bucket", "likely")
     status = request.args.get("status", "new")
     term = request.args.get("term", "all")          # all | primary | alt (see prefilter.term_track)
@@ -186,10 +278,7 @@ def index():
         rv, ph = config.RUBRIC_VERSION, config.profile_hash()
         # One pass over every bucket: the tab counters need the whole set anyway, and the term chips
         # count within the selected bucket, so both are cheaper to do here than in a second query.
-        every = [_row(r) for r in db.latest_evaluations(conn, rv, ph, include_handled=True)]
-        limits, used = applimits.cached_company_limits(conn), applimits.submitted_counts(conn)
-        for r in every:
-            r["app_limit"] = _app_limit(limits, used, r["company_name"])
+        every = _all_rows(conn)
         if status != "all":
             every = [r for r in every if r["app_status"] == status]
         src_counts = {"all": len(every), "fast": sum(1 for r in every if r["src"] in ("fast", "triage")),
@@ -230,7 +319,7 @@ def index():
         stats = _stats(conn)
     finally:
         conn.close()
-    return render_template("index.html", rows=rows, bucket=bucket, status=status, term=term, role=role, q=q, unread=unread, sort=sort, watch=watch,
+    return render_template("jobs.html", rows=rows, bucket=bucket, status=status, term=term, role=role, q=q, unread=unread, sort=sort, watch=watch,
                            src=src, src_counts=src_counts,
                            counts=counts, term_counts=term_counts, term_labels=_term_labels(profile),
                            role_counts=role_counts, role_labels={"all": "All types", **roletype.LABELS},
@@ -302,6 +391,44 @@ def pipeline_page():
                            tasks=_running_tasks())
 
 
+@app.route("/profile")
+def profile_page():
+    """The constraints that decide what gets scored — editable, unlike the read-only dump on Settings."""
+    p = config.load_profile()
+    conn = db.connect()
+    try:
+        db.init_db(conn)
+        stats = _stats(conn)
+    finally:
+        conn.close()
+    dump = p.model_dump()
+    fields = []
+    for dotted, (kind, visible) in config.PROFILE_FIELDS.items():
+        cur: Any = dump
+        for part in dotted.split("."):
+            cur = cur[part]
+        fields.append({"key": dotted, "kind": kind, "visible": visible, "value": cur})
+    return render_template("profile.html", p=p, fields={f["key"]: f for f in fields},
+                           md=config.load_profile_md(), md_path=str(config.PROFILE_MD),
+                           yaml_path=str(config.PROFILE_YAML), stats=stats, tasks=_running_tasks())
+
+
+@app.post("/api/profile")
+def api_profile():
+    """One constraint at a time, so a bad value can never take the rest of the form down with it."""
+    data = request.get_json(force=True) or {}
+    key = str(data.get("key", ""))
+    try:
+        value = config.set_profile_field(key, data.get("value"))
+    except KeyError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:      # the rewritten profile failed validation; the file was restored
+        return jsonify({"error": f"profile.yaml rejected that: {str(e)[:200]}"}), 400
+    visible = config.PROFILE_FIELDS[key][1]
+    return jsonify({"ok": True, "key": key, "value": value, "rescore": visible,
+                    "profile_hash": config.profile_hash()})
+
+
 @app.post("/api/settings")
 def api_settings():
     """Edit one whitelisted, non-model-visible knob in profile.yaml (comments preserved)."""
@@ -346,6 +473,7 @@ def settings():
     editable = {k: v for k, v in _flatten("", dump) if k in config.EDITABLE_KNOBS}
     return render_template("settings.html", sections=sections, stats=stats, tasks=_running_tasks(), editable=editable,
                            kinds={k: t.__name__ for k, t in config.EDITABLE_KNOBS.items()},
+                           theme_groups=themes.groups(),
                            yaml_path=str(config.PROFILE_YAML), md_path=str(config.PROFILE_MD))
 
 

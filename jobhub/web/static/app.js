@@ -95,7 +95,7 @@ const JobHub = (() => {
     const q = wlf.value.trim().toLowerCase();
     let n = 0;
     document.querySelectorAll("#wllist .wl-item").forEach(i => { const show = !q || i.dataset.name.includes(q); i.hidden = !show; n += show; });
-    document.getElementById("wlcount").textContent = n;
+    const c = document.getElementById("wlcount"); if (c) c.textContent = n;
   });
 
   // Task forms on the Runs page: every field is an option of the same-named CLI flag.
@@ -122,6 +122,52 @@ const JobHub = (() => {
     if (b) saveKnob(document.querySelector(`input.knobinput[data-knob="${b.dataset.knob}"]`));
   });
   document.addEventListener("change", e => { if (e.target.matches('input.knobinput[type=checkbox]')) saveKnob(e.target); });
+
+  // Jobs page: the filter drawer stays shut unless something is on, so the header is one row.
+  const jfilt = document.querySelector("button.jfilt"), jdrawer = document.getElementById("jdrawer");
+  if (jfilt && jdrawer) {
+    if (jfilt.classList.contains("on")) { jdrawer.hidden = false; jfilt.setAttribute("aria-expanded", "true"); }
+    jfilt.addEventListener("click", () => {
+      jdrawer.hidden = !jdrawer.hidden;
+      jfilt.setAttribute("aria-expanded", String(!jdrawer.hidden));
+    });
+  }
+
+  // Profile: save a field when it loses focus, one at a time so a bad value can't sink the rest.
+  const flash = (el, cls) => { el.classList.add(cls); setTimeout(() => el.classList.remove(cls), 1400); };
+  const saveField = el => {
+    const key = el.dataset.field;
+    const value = el.dataset.kind === "bool" ? el.checked
+                : el.dataset.kind === "list" ? el.value.split(",").map(s => s.trim()).filter(Boolean)
+                : el.value;
+    const note = document.getElementById("pfsave");
+    return post("/api/profile", {key, value}).then(r => {
+      if (r.error) { flash(el, "bad"); if (note) note.textContent = r.error; return; }
+      flash(el, "saved");
+      if (el.dataset.kind === "bool") { const s = el.parentElement.querySelector("span"); if (s) s.textContent = el.checked ? "on" : "off"; }
+      if (note) note.textContent = r.rescore ? "Saved — re-score to apply it to existing postings." : "Saved.";
+    });
+  };
+  document.addEventListener("change", e => {
+    if (e.target.matches("[data-field]") && e.target.dataset.kind === "bool") saveField(e.target);
+  });
+  document.addEventListener("blur", e => {
+    const el = e.target;
+    if (!el.matches || !el.matches("[data-field]") || el.dataset.kind === "bool") return;
+    if (el.value !== el.defaultValue) { el.defaultValue = el.value; saveField(el); }
+  }, true);
+
+  // Theme picker: swap the attribute first so the choice is instant, then persist it.
+  document.addEventListener("click", e => {
+    const t = e.target.closest("button.theme");
+    if (!t) return;
+    const key = t.dataset.themeKey, prev = document.documentElement.dataset.theme;
+    document.documentElement.dataset.theme = key;
+    document.querySelectorAll("button.theme").forEach(b => b.classList.toggle("on", b === t));
+    post("/api/theme", {theme: key}).then(r => {
+      if (r && r.error) { alert(r.error); document.documentElement.dataset.theme = prev; }
+    });
+  });
 
   // Jobs page: tick jobs, then run the full rubric on just those.
   const picked = () => [...document.querySelectorAll("input.pick:checked")].map(c => Number(c.value));

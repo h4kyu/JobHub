@@ -1,8 +1,0 @@
-{% extends "base.html" %}
-{% block title %}{{ name }} — JobHub{% endblock %}
-{% block body %}
-<a class="back" href="{{ url_for('runs') }}">← Runs</a>
-<article id="md" class="digest card"></article>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
-<script>document.getElementById('md').innerHTML = marked.parse({{ content | tojson }});</script>
-{% endblock %}

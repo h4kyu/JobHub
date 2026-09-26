@@ -20,3 +20,6 @@ profile/projects/
 profile/*.pdf
 profile/interview*/
 profile/prep*/
+
+# Jinja templates (per your request — see README "Repo layout")
+jobhub/web/templates/

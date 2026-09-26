@@ -1,6 +1,0 @@
-<div class="summary {{ cls or '' }}">
-  {% if r.bullets %}<ul>{% for b in r.bullets %}<li>{{ b }}</li>{% endfor %}</ul>{% else %}<div class="desc1">{{ r.summary or '' }}</div>{% endif %}
-  {% if r.fit_tags or r.gap_tags %}<div class="tags">{% for t in r.fit_tags %}<span class="tag fit">{{ t }}</span>{% endfor %}{% for t in r.gap_tags %}<span class="tag gap">{{ t }}</span>{% endfor %}</div>{% endif %}
-  {% if r.wildcard_reason %}<div class="wild">Wildcard — {{ r.wildcard_reason }}</div>{% endif %}
-  {% if r.red_flags %}<div class="tags">{% for f in r.red_flags %}<span class="tag warn">⚠ {{ f }}</span>{% endfor %}</div>{% endif %}
-</div>
