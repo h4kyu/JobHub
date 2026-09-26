@@ -20,11 +20,30 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from . import config, db, prefilter, roletype
-from .config import FastScoring, Profile
+from .config import FastScoring, Profile, TargetDomain
 from .llm.base import LLMBackend, LLMRateLimitError
 from .models import Bucket
 from .normalize import slugify
-from .skills import _bounded, _domain_patterns
+
+def _bounded(kw: str) -> str:
+    """Wrap a keyword so it can't match inside a longer word — "hip" must not fire on "internship".
+    Lookarounds rather than \\b, because keywords like "c++" end in a non-word character."""
+    pat = re.escape(kw)
+    if kw[:1].isalnum():
+        pat = r"(?<![A-Za-z0-9])" + pat
+    if kw[-1:].isalnum():
+        pat = pat + r"(?![A-Za-z0-9])"
+    return pat
+
+
+def _domain_patterns(domains: list[TargetDomain]) -> list[tuple[str, re.Pattern[str]]]:
+    out = []
+    for d in domains:
+        kws = [k for k in d.keywords if k]
+        if kws:
+            out.append((d.name, re.compile("|".join(_bounded(k) for k in kws), re.I)))
+    return out
+
 
 FAST_MODELS = ("local", "triage")
 BAND_YES, BAND_NO, BAND_AMBIGUOUS = "yes", "no", "ambiguous"

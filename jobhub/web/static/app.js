@@ -22,8 +22,6 @@ const JobHub = (() => {
     }
     const task = e.target.closest("button.task");
     if (task) { startTask(task.dataset.kind, JSON.parse(task.dataset.args || "{}")); return; }
-    const show = e.target.closest("a.showlog");
-    if (show) { e.preventDefault(); followLog(show.dataset.id); }
   });
 
   // Watchlist page: search the company directory, add a result, remove a followed company.
@@ -64,8 +62,33 @@ const JobHub = (() => {
     }));
   }
   document.addEventListener("click", e => {
-    const x = e.target.closest("button.wl-x");
+    const x = e.target.closest("button.wl-x, button.wl-remove");
     if (x) post(`/api/watchlist/${x.dataset.slug}/remove`).then(() => location.reload());
+  });
+
+  // Pipeline page, Sources stage: the count tiles open the lists/boards they count; lists can be switched or added.
+  const openTile = t => { const d = document.getElementById(t.dataset.open); if (d) { d.open = !d.open; if (d.open) d.scrollIntoView({block: "nearest"}); } };
+  document.querySelectorAll(".metrics .open").forEach(t => {
+    t.addEventListener("click", () => openTile(t));
+    t.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openTile(t); } });
+  });
+  document.addEventListener("click", e => {
+    const b = e.target.closest("button.src");
+    if (b) post(`/api/sources/${b.dataset.repo}/${b.dataset.action}`).then(() => location.reload());
+  });
+  const addlist = document.getElementById("addlist");
+  if (addlist) addlist.addEventListener("submit", e => {
+    e.preventDefault();
+    const msg = document.getElementById("addlistmsg"), btn = addlist.querySelector("button");
+    btn.disabled = true; msg.textContent = "Checking the repo…";
+    post("/api/sources", {repo: addlist.elements.repo.value}).then(r => {
+      if (r.error) { msg.textContent = r.error; btn.disabled = false; } else location.reload();
+    });
+  });
+  const boardfilter = document.getElementById("boardfilter");
+  if (boardfilter) boardfilter.addEventListener("input", () => {
+    const q = boardfilter.value.trim().toLowerCase();
+    document.querySelectorAll("#boardrows tr").forEach(r => { r.hidden = q && !r.dataset.name.includes(q); });
   });
   const wlf = document.getElementById("wlfilter");
   if (wlf) wlf.addEventListener("input", () => {
@@ -114,7 +137,7 @@ const JobHub = (() => {
   function startTask(kind, args) {
     return post(`/api/tasks/${kind}`, args).then(r => {
       if (r.error) { alert(r.error); return null; }
-      if (location.pathname === "/runs") followLog(r.id); else location.href = "/runs";
+      if (location.pathname === "/pipeline") { followLog(r.id); document.getElementById("livelog")?.scrollIntoView({block: "nearest"}); } else location.href = "/pipeline";
       return r.id;
     });
   }

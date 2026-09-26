@@ -30,7 +30,7 @@ def _k(n) -> str:
 
 _TASKS: dict[str, dict] = {}
 _TASK_LOCK = threading.Lock()
-ALLOWED_TASKS = {"ingest", "evaluate", "digest", "run", "rescore", "skills", "score", "deep"}
+ALLOWED_TASKS = {"ingest", "digest", "run", "score", "deep"}
 
 
 # ---------------- helpers ----------------
@@ -50,17 +50,20 @@ def _stats(conn) -> dict:
     q = lambda sql, *a: conn.execute(sql, a).fetchone()[0]
     pending = db.count_pending_fast(conn, ph)
     last = conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 1").fetchone()
+    awaiting = fastscore.count_ambiguous(conn, ph)
+    last_score = db.uj(db.get_meta(conn, "last_score"), {}) or {}
     return {
         "active": q("SELECT COUNT(*) FROM jobs WHERE active = 1"),
         "with_text": q("SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text IS NOT NULL AND description_text != ''"),
         "pending": pending,
-        "awaiting_model": fastscore.count_ambiguous(conn, ph),   # local score only; a triage pass would refine these
+        "awaiting_model": awaiting,   # local score only; a triage pass would refine these
+        "refine_warning": pipeline.refine_warning(last_score, awaiting),
         "evaluated": q("SELECT COUNT(DISTINCT job_id) FROM evaluations WHERE profile_hash = ? AND hard_reject_reason IS NULL", ph),
         "deep": q("SELECT COUNT(DISTINCT job_id) FROM evaluations WHERE profile_hash = ? AND hard_reject_reason IS NULL "
                   "AND model NOT IN ('prefilter', 'local', 'triage')", ph),
         "last_run": dict(last) if last else None,
         "budget": _budget(conn),
-        "last_score": db.uj(db.get_meta(conn, "last_score"), {}) or {},
+        "last_score": last_score,
         "profile_hash": ph, "rubric": rv,
     }
 
@@ -258,35 +261,6 @@ def job(job_id: int):
                            urls=urls, company=dict(company) if company else None, statuses=[s.value for s in AppStatus], stats=stats, tasks=_running_tasks())
 
 
-@app.route("/skills")
-def skills():
-    """What the aspirational postings ask for, and the plan to get there (see jobhub/skills.py)."""
-    from .. import skills as skills_mod
-
-    status_filter = request.args.get("status", "missing")
-    conn = db.connect()
-    try:
-        db.init_db(conn)
-        demands = skills_mod.load_demands(conn)
-        plan = skills_mod.stored_plan(conn)
-        generated_at = db.get_meta(conn, "skills_generated_at")
-        counts = {s: sum(1 for d in demands if d["status"] == s) for s in ("missing", "partial", "have")}
-        if status_filter != "all":
-            demands = [d for d in demands if d["status"] == status_filter]
-        job_ids = sorted({i for d in demands for i in d["job_ids"]})
-        titles = {}
-        if job_ids:
-            qs = ",".join("?" * len(job_ids))
-            for r in conn.execute(f"SELECT id, company_name, title FROM jobs WHERE id IN ({qs})", job_ids):
-                titles[r["id"]] = f"{r['company_name']} — {r['title']}"
-        stats = _stats(conn)          # base.html renders the header counters on every page
-    finally:
-        conn.close()
-    return render_template("skills.html", demands=demands, plan=plan, generated_at=generated_at,
-                           counts=counts, status_filter=status_filter, titles=titles, stats=stats,
-                           tasks=_running_tasks())
-
-
 @app.route("/companies")
 def companies():
     """The watchlist: companies whose careers pages are read directly. Adding goes through the directory search."""
@@ -299,23 +273,6 @@ def companies():
         conn.close()
     tags = [(k, roletype.LABELS.get(k, k), n) for k, n in sorted(directory.tag_counts().items(), key=lambda kv: -kv[1])]
     return render_template("companies.html", watched=watched, tags=tags, stats=stats, tasks=_running_tasks())
-
-
-@app.route("/runs")
-def runs():
-    conn = db.connect()
-    try:
-        db.init_db(conn)
-        history = [dict(r) for r in conn.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 30")]
-        for h in history:
-            h["errors"] = db.uj(h.get("errors"), []) or []
-        stats = _stats(conn)
-        by_kind = {d: [dict(r) for r in db.tokens_by_kind(conn, d)] for d in (7, 30)}   # what actually spent the tokens
-    finally:
-        conn.close()
-    digests = sorted((p.name for p in config.DIGESTS_DIR.glob("*.md")), reverse=True) if config.DIGESTS_DIR.exists() else []
-    return render_template("runs.html", history=history, stats=stats, tasks=_running_tasks(), digests=digests,
-                           by_kind=by_kind, llm=config.load_profile().llm)
 
 
 def _flatten(prefix: str, obj) -> list[tuple[str, str]]:
@@ -339,8 +296,9 @@ def pipeline_page():
     finally:
         conn.close()
     editable = {k: v for k, v in _flatten("", profile.model_dump()) if k in config.EDITABLE_KNOBS}
-    return render_template("pipeline.html", st=st, stats=stats, llm=profile.llm, fs=profile.fast_scoring, editable=editable,
-                           kinds={k: t.__name__ for k, t in config.EDITABLE_KNOBS.items()}, give_up=db.FETCH_GIVE_UP,
+    digests = sorted((p.name for p in config.DIGESTS_DIR.glob("2*.md")), reverse=True) if config.DIGESTS_DIR.exists() else []
+    return render_template("pipeline.html", st=st, stats=stats, llm=profile.llm, fs=profile.fast_scoring, editable=editable, digests=digests,
+                           kinds={k: t.__name__ for k, t in config.EDITABLE_KNOBS.items()},
                            tasks=_running_tasks())
 
 
@@ -377,7 +335,7 @@ def settings():
                        ("buckets", "Deep-evaluation bucket gates."),
                        ("llm", "Models, batching, triage and token budgets."),
                        ("sources", "Aggregator repos polled every ingest."),
-                       ("target_domains", "Fields mined by `jobhub skills` and rewarded by the fast score.")):
+                       ("target_domains", "Fields rewarded by the fast score.")):
         sections.append({"name": name, "note": note, "rows": _flatten(name, dump[name])})
     conn = db.connect()
     try:
@@ -385,7 +343,9 @@ def settings():
         stats = _stats(conn)
     finally:
         conn.close()
-    return render_template("settings.html", sections=sections, stats=stats, tasks=_running_tasks(),
+    editable = {k: v for k, v in _flatten("", dump) if k in config.EDITABLE_KNOBS}
+    return render_template("settings.html", sections=sections, stats=stats, tasks=_running_tasks(), editable=editable,
+                           kinds={k: t.__name__ for k, t in config.EDITABLE_KNOBS.items()},
                            yaml_path=str(config.PROFILE_YAML), md_path=str(config.PROFILE_MD))
 
 
@@ -421,6 +381,45 @@ def api_status():
     finally:
         conn.close()
     return jsonify({"ok": True})
+
+
+@app.post("/api/sources/<path:repo>/<action>")
+def api_source(repo: str, action: str):
+    """Turn an internship list on or off. A disabled list is skipped by every ingest and never re-enabled automatically."""
+    status = {"disable": "disabled", "enable": "active"}.get(action)
+    if not status:
+        return jsonify({"error": "bad action"}), 400
+    conn = db.connect()
+    try:
+        cur = conn.execute("UPDATE repo_sources SET status = ? WHERE repo = ?", (status, repo))
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": cur.rowcount > 0})
+
+
+@app.post("/api/sources")
+def api_source_add():
+    """Add a GitHub internship list by `owner/name` (or its URL). It is fetched once to prove it parses before it is kept."""
+    from ..sources.repo_discovery import probe_repo
+
+    raw = (request.get_json(force=True).get("repo") or "").strip()
+    repo = re.sub(r"^(https?://)?(www\.)?github\.com/", "", raw).strip("/")
+    repo = re.sub(r"\.git$", "", repo)
+    if not re.fullmatch(r"[\w.-]+/[\w.-]+", repo):
+        return jsonify({"error": "Enter a GitHub repo as owner/name, e.g. SimplifyJobs/Summer2027-Internships."}), 400
+    kind, n, err = probe_repo(repo)
+    if not kind:
+        return jsonify({"error": f"Couldn't read internship postings from {repo}" + (f" ({err})" if err else f" (only {n} parsable)") + "."}), 422
+    conn = db.connect()
+    try:
+        db.init_db(conn)
+        db.upsert_repo_source(conn, repo, kind=kind, source="manual", status="active", last_jobs=n, last_checked=db.now())
+        conn.execute("UPDATE repo_sources SET status = 'active' WHERE repo = ?", (repo,))   # re-adding also turns a disabled list back on
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "repo": repo, "postings": n})
 
 
 @app.get("/api/directory/search")
@@ -470,23 +469,6 @@ def api_task(kind: str):
             return jsonify({"error": "a task is already running"}), 409
     data = request.get_json(silent=True) or {}
     args: list[str] = []
-    num = lambda k: int(data[k]) if str(data.get(k, "")).strip() not in ("", "None") else None
-    if kind in ("ingest", "run") and num("fetch_limit") is not None:
-        args += ["--fetch-limit", str(num("fetch_limit"))]
-    if kind == "ingest" and data.get("retry_unreadable"):
-        args += ["--retry-unreadable"]
-    if kind in ("evaluate", "rescore", "run", "score") and data.get("limit"):
-        args += ["--limit", str(int(data["limit"]))]
-    if kind in ("run", "score"):
-        if num("budget") is not None:
-            args += ["--budget", str(num("budget"))]
-        if data.get("no_model"):
-            args += ["--no-model"]
-    if kind == "rescore":
-        if data.get("recompute_only"):
-            args += ["--recompute-only"]
-        if data.get("carry_over"):
-            args += ["--carry-over"]
     if kind == "deep":
         args += [str(int(i)) for i in (data.get("job_ids") or [])]
         if data.get("top"):
@@ -495,11 +477,6 @@ def api_task(kind: str):
                 args += ["--bucket", data["bucket"]]
         if not args:
             return jsonify({"error": "pick at least one job, or set 'top N'"}), 400
-    if kind == "skills":
-        if data.get("limit"):
-            args += ["--limit", str(int(data["limit"]))]
-        if data.get("no_plan"):
-            args += ["--no-plan"]
     return jsonify({"id": _spawn(kind, args)})
 
 

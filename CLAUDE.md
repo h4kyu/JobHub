@@ -28,7 +28,6 @@ put them behind the `LLMBackend` protocol in `jobhub/llm/base.py`.
 .venv/bin/jobhub deep 123 456            # on-demand full rubric for specific jobs; --top 20 --bucket likely for the best fast-scored
 .venv/bin/jobhub ingest --fetch-limit 20 # cheap way to exercise sources; evaluate --limit N for model calls
 .venv/bin/jobhub serve --port 8799 --no-open-browser   # local Flask UI (jobhub/web/); curl pages to smoke-test
-.venv/bin/jobhub skills --limit 24        # mine aspirational postings for what to learn -> digests/skills.md
 .venv/bin/jobhub triage --dry-run         # calibrate the stage-1 cut before enabling llm.triage_enabled
 ```
 
@@ -127,7 +126,9 @@ when testing. `jobhub smoke` is the cheap sanity check.
   Ashby, Workday `wday/cxs`, SmartRecruiters) over page scraping.
 - **Aggregator repos** are stored in `repo_sources` (seeded from `profile.yaml`, extended weekly by
   `sources/repo_discovery.py` via the GitHub search API — unauthenticated, throttled to <10 req/min; `meta.repo_search_at`
-  gates the weekly run). A repo is enabled only if it yields ≥15 parsable postings; fetch failures mark it `broken`.
+  gates the weekly run). A repo is enabled only if it yields ≥15 parsable postings. Only a 404/410 or unparseable response marks it `broken`
+  (a network drop or 5xx leaves its status alone), and `broken` repos are retried every ingest, recovering once they
+  parse ≥15 postings again; only `disabled` stays off (`ingest.record_repo_failure/record_repo_success`).
 - **Harvesting beats probing.** `ingest.board_from_url()` recovers `(ats_type, ats_token)` from a posting's public
   URL, and `harvest_boards()` applies it to every company that lacks a board. For Workday this matters more than
   for the others: the `site` segment (`NVIDIAExternalCareerSite`) is unguessable, but it is sitting verbatim in job
@@ -166,15 +167,6 @@ when testing. `jobhub smoke` is the cheap sanity check.
   keychain auth); the subprocess runs in `data/llm_cwd` so no CLAUDE.md is auto-loaded; `CLAUDECODE` is stripped from
   the env so it works when launched from inside a Claude Code session.
 
-- **Skills mining** (`jobhub/skills.py`, `jobhub skills`): the inverse of evaluation — for postings the candidate
-  *cannot* get (GPU, compilers, performance, HFT, systems, per `profile.yaml: target_domains`), extract what they
-  require, aggregate a demand table into `skill_demands`, and synthesize one ordered learning plan (stored in
-  `meta.skills_plan`, rendered to `digests/skills.md` and `/skills`). Selection is keyword-based and free;
-  postings are ranked reach/wildcard first, then by keyword density, and syndicated duplicates are dropped.
-  Keywords are matched with alnum lookarounds, not `\b` (keywords like `c++` end in punctuation) — without that,
-  `hip` matched inside `internship` and tagged every posting as GPU work. A skill's `status` is the most
-  pessimistic judgement any posting gave it. `target_domains` is not in `model_visible_constraints`, so editing it
-  never triggers re-evaluation.
 - **Role types** (`jobhub/roletype.py`): the Role type chip row (`?role=quant|gpu|robotics|perf|ml|systems|hardware|general`)
   and card badge. The rubric has no category field, so this is a free, deterministic classifier computed per page
   load from stored data: a known trading firm (`QUANT_FIRMS`) is always quant; otherwise the title decides when it

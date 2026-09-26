@@ -115,8 +115,8 @@ Everything else has a default and lives in Advanced or is internal.
 | **Companies** (`/companies`) | Rebuild | Directory search + watchlist. No approved/proposed/stopped groups, no tiers, no "why" column, no Discover button |
 | **Aggregator repos** table (on Companies) | Remove | Maintainer concern |
 | **Blind spots** (`/blindspots`) | Remove | Directory `no_feed` rows are hidden by decision |
-| **Skills** (`/skills`) | Keep as opt-in module | Genuinely a separate feature ("what should I learn"). Off until enabled |
-| **Runs** (`/runs`) | Split | Token budget becomes a usage meter in Settings. The nine task forms (run, ingest, score, deep, evaluate, rescore, digest, skills, discover) go to Advanced. The user-facing version is one "Update now" button and history |
+| **Skills** (`/skills`) | Removed 2026-09-25 | Was a personal what-to-learn report; code, prompts, schemas and tests deleted |
+| **Runs** (`/runs`) | Removed 2026-09-25 | Pipeline page covers it: run/score/deep buttons, digests list and the live log moved there; the token meter in the header links to Settings |
 | **Settings** (`/settings`) | Rebuild | Today it is a read-only dump of every YAML key. Becomes real, grouped, editable settings: Search, Eligibility, Companies, AI help, Notifications |
 | **Digest view** | Keep, optional | Output, off by default |
 | **Header stats** (open / scored / to score / unrefined / boards / token meter) | Remove | Implementation counters. Keep at most "N new" |

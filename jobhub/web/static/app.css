@@ -97,14 +97,7 @@ td.done { color:var(--ok) } td.failed { color:var(--bad) } td.running { color:va
 .digest { max-width:1100px } .digest table { font-size:.9rem } .digest th { position:static }
 @media (max-width: 1100px) { .jobcard { grid-template-columns: 1fr 1fr } .jobcard .summary { grid-column: 1 / -1 } .jobpage { grid-template-columns: 1fr } .aside { position:static } }
 
-/* ---- skills page ---- */
-.plan { margin: 1.2rem 0 2rem; }
-.plan .lede { font-size: 1.05rem; line-height: 1.5; margin-bottom: 1.2rem; }
-.plan-item { border-left: 3px solid var(--accent, #4a7); padding: .1rem 0 .1rem 1rem; margin-bottom: 1.1rem; }
-.plan-item h3 { margin: 0 0 .35rem; font-size: 1rem; }
-.plan-item h3 .num { display: inline-block; min-width: 1.4em; opacity: .5; font-family: "IBM Plex Mono", monospace; }
-.plan-item p { margin: .2rem 0; line-height: 1.45; }
-.plan-item b { font-weight: 600; opacity: .75; margin-right: .3rem; }
+/* ---- shared tabs / grid tables ---- */
 .tabs { display: flex; gap: .25rem; margin: 1.4rem 0 .6rem; flex-wrap: wrap; }
 .tabs a { padding: .3rem .7rem; border-radius: 4px; text-decoration: none; font-size: .9rem; }
 .tabs a.on { background: var(--chip, #e8e8ea); font-weight: 600; }
@@ -125,10 +118,6 @@ table.grid .small { font-size: .85em; }
 .stats .meter { position:relative; display:inline-block; padding-bottom:3px; color:var(--mut) } .stats .meter:hover { text-decoration:none }
 .stats .meter i { position:absolute; left:0; bottom:0; height:2px; background:var(--acc); border-radius:1px }
 .stats .meter.high i { background:var(--warn) } .stats .meter.over i, .stats .meter.over b { background:var(--bad); color:var(--bad) } .stats .meter.over b { background:none }
-.budget { margin-bottom:6px } .budgetrow { display:flex; gap:40px; flex-wrap:wrap; align-items:flex-start; margin-bottom:12px }
-.budgetrow .big { font-size:1.6rem; font-weight:600 } .budgetrow .big.over { color:var(--bad) } .budgetrow .big.high { color:var(--warn) }
-.bar { width:260px; height:6px; background:var(--wash); border-radius:3px; margin-top:6px; overflow:hidden } .bar i { display:block; height:100%; background:var(--acc) } .bar.high i { background:var(--warn) } .bar.over i { background:var(--bad) }
-.taskgrid { display:grid; grid-template-columns:repeat(auto-fill, minmax(270px, 1fr)); gap:12px }
 .taskform { display:flex; flex-direction:column; gap:8px } .taskform h3 { font-size:1rem; font-weight:600 } .taskform h3 small { color:var(--faint); font-weight:400 }
 .taskform label { display:flex; justify-content:space-between; align-items:center; gap:10px; font-size:.9rem; color:var(--mut) } .taskform label input:not([type=checkbox]), .taskform label select { width:130px }
 .taskform label.chk { justify-content:flex-start } .taskform p.hint { margin:0 } .taskform button { align-self:flex-start; margin-top:2px }
@@ -165,4 +154,13 @@ table.grid .small { font-size: .85em; }
 .wl-list { display:flex; flex-wrap:wrap; gap:8px; margin-top:12px }
 .wl-item { display:inline-flex; align-items:center; gap:2px; padding:3px 4px 3px 11px; border-radius:14px; border:1px solid var(--line); background:var(--surface); font-size:.9rem }
 .wl-item[hidden] { display:none }
-.wl-x { border:none; background:transparent; color:var(--faint); padding:0 7px; font-size:1.05rem; line-height:1; border-radius:10px } .wl-x:hover { color:var(--bad); background:var(--wash) }
+.wl-x, .xbtn { border:none; background:transparent; color:var(--faint); padding:0 7px; font-size:1.05rem; line-height:1; border-radius:10px } .wl-x:hover, .xbtn:hover { color:var(--bad); background:var(--wash) }
+
+/* Pipeline > Sources: expandable lists and boards */
+.metrics > div.open { cursor:pointer } .metrics > div.open:hover { outline:1px solid var(--acc) } .metrics > div.open:focus-visible { outline:2px solid var(--acc) }
+.srcbox { margin:8px 0; border:1px solid var(--line); border-radius:var(--r); background:var(--surface) }
+.srcbox > summary { cursor:pointer; padding:8px 12px; font-weight:600; list-style-position:inside } .srcbox > summary small { font-weight:400; margin-left:8px }
+.srcbox[open] > summary { border-bottom:1px solid var(--line) } .srcbox > table, .srcbox > .srcscroll, .srcbox > form, .srcbox > .runbox, .srcbox > input { margin:10px 12px }
+.srcbox > table { width:calc(100% - 24px) } .srcscroll { max-height:340px; overflow:auto; border:1px solid var(--line); border-radius:var(--r) } .srcscroll table { border:0; margin:0 }
+.srcscroll thead th { position:sticky; top:0 } .srcscroll tr[hidden] { display:none }
+.srcbox th.cnt, .srcbox td.cnt { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap }  /* not .n: .stage .n is the round step badge */

@@ -122,9 +122,8 @@ class LLMConfig(BaseModel):
 
 
 class TargetDomain(BaseModel):
-    """An aspirational field: postings here are mined by `jobhub skills` for what to go learn,
-    whatever bucket they landed in. Not part of model_visible_constraints, so editing these
-    never triggers re-evaluation."""
+    """A target field: postings whose title or description mention its keywords score higher in the fast score.
+    Not part of model_visible_constraints, so editing these never triggers re-evaluation."""
     name: str
     keywords: list[str] = []
 

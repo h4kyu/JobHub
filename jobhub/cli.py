@@ -50,12 +50,9 @@ def smoke() -> None:
 
 
 @app.command()
-def ingest(fetch_limit: Optional[int] = typer.Option(None, help="Max job descriptions to fetch this run (default: all pending; 0 = none)"),
-           retry_unreadable: bool = typer.Option(False, "--retry-unreadable", help="First give every job whose description failed to fetch another set of attempts")) -> None:
+def ingest(fetch_limit: Optional[int] = typer.Option(None, help="Max job descriptions to fetch this run (default: all pending; 0 = none)")) -> None:
     """Pull all sources, dedupe into the database, fetch missing descriptions."""
     with db.session() as conn:
-        if retry_unreadable:
-            typer.echo(f"{db.reset_fetch_failures(conn)} jobs re-queued for description fetching")
         run_id = db.start_run(conn, "ingest")
         from .ingest import run_ingest
 
@@ -203,32 +200,6 @@ def deep(job_ids: list[int] = typer.Argument(None, help="Job ids to evaluate wit
     typer.echo(json.dumps({k: v for k, v in stats.items() if k != "errors"}))
     if stats["errors"]:
         typer.echo(f"{len(stats['errors'])} error(s); first: {stats['errors'][0]}")
-
-
-@app.command()
-def skills(
-    limit: int = typer.Option(40, help="Max postings to mine"),
-    bucket: Optional[str] = typer.Option(None, help="Restrict to one bucket (reach, wildcard, archive, likely)"),
-    no_plan: bool = typer.Option(False, "--no-plan", help="Skip the synthesis call; demand table only"),
-    show: bool = typer.Option(False, "--show", help="Print the stored report instead of regenerating"),
-) -> None:
-    """Mine aspirational postings (GPU, compilers, performance, HFT, systems) for what to go learn."""
-    from .skills import run_skills
-
-    path = config.DIGESTS_DIR / "skills.md"
-    if show:
-        if not path.exists():
-            raise typer.BadParameter("no report yet — run `jobhub skills` first")
-        typer.echo(path.read_text())
-        return
-    with db.session() as conn:
-        run_id = db.start_run(conn, "skills")
-        stats = run_skills(conn, _backend(), limit=limit, buckets=[bucket] if bucket else None,
-                           make_plan=not no_plan, log=typer.echo)
-        db.finish_run(conn, run_id, llm_calls=stats["llm_calls"], errors=stats["errors"],
-                      llm_input_tokens=stats["tokens"]["input"], llm_output_tokens=stats["tokens"]["output"],
-                      llm_cache_read_tokens=stats["tokens"]["cache_read"])
-    typer.echo(json.dumps({k: v for k, v in stats.items() if k != "errors"}))
 
 
 @app.command()

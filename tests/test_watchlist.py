@@ -96,3 +96,66 @@ def test_seed_and_harvest_add_new_companies_but_never_bring_back_a_removed_one(c
     watchlist.remove(conn, "harvested")
     ingest.harvest_boards(conn, log=lambda *_: None)
     assert db.get_company_by_slug(conn, "harvested")["status"] == "paused"
+
+
+# ---- aggregator list health: one network blip must not switch a list off for good ----
+
+import httpx
+
+
+def _status(conn, repo):
+    return conn.execute("SELECT status FROM repo_sources WHERE repo = ?", (repo,)).fetchone()["status"]
+
+
+def _http_error(code):
+    req = httpx.Request("GET", "https://x")
+    return httpx.HTTPStatusError("boom", request=req, response=httpx.Response(code, request=req))
+
+
+def test_network_errors_do_not_break_a_list_but_a_404_does(conn):
+    db.upsert_repo_source(conn, "a/list", kind="readme", source="github_search", last_jobs=500)
+    ingest.record_repo_failure(conn, "a/list", httpx.ConnectError("[Errno 8] nodename nor servname provided"))
+    assert _status(conn, "a/list") == "active"
+    ingest.record_repo_failure(conn, "a/list", _http_error(503))
+    assert _status(conn, "a/list") == "active"
+    ingest.record_repo_failure(conn, "a/list", _http_error(404))
+    assert _status(conn, "a/list") == "broken"
+
+
+def test_broken_lists_are_retried_and_recover_but_disabled_ones_stay_off(conn):
+    db.upsert_repo_source(conn, "gone/list", kind="readme", source="github_search", status="broken")
+    db.upsert_repo_source(conn, "off/list", kind="readme", source="github_search", status="disabled")
+    db.upsert_repo_source(conn, "ok/list", kind="readme", source="github_search")
+    names = {s.name for s in ingest.build_sources(conn)}
+    assert "readme:gone/list" in names and "readme:ok/list" in names and "readme:off/list" not in names
+    ingest.record_repo_success(conn, "gone/list", 400)
+    assert _status(conn, "gone/list") == "active"
+    ingest.record_repo_success(conn, "off/list", 400)
+    assert _status(conn, "off/list") == "disabled"
+
+
+def test_a_broken_list_that_still_parses_to_almost_nothing_stays_broken(conn):
+    db.upsert_repo_source(conn, "thin/list", kind="readme", source="github_search", status="broken")
+    ingest.record_repo_success(conn, "thin/list", 3)
+    assert _status(conn, "thin/list") == "broken"
+
+
+# ---- Pipeline > Sources: turn lists on/off, add one, list boards ----
+
+def test_source_endpoints_toggle_validate_and_the_status_lists_boards(conn):
+    from jobhub import pipeline
+    from jobhub.web import app as web
+
+    db.upsert_repo_source(conn, "a/list", kind="readme", source="github_search", last_jobs=40)
+    watchlist.add_directory(conn, "acme")
+    conn.commit()
+    client = web.app.test_client()
+    assert client.post("/api/sources/a/list/disable").get_json() == {"ok": True}
+    assert _status(conn, "a/list") == "disabled"
+    assert all(l["repo"] != "a/list" for l in pipeline.pipeline_status(conn)["sources"]["lists"])   # removed lists leave the panel
+    assert client.post("/api/sources/a/list/enable").get_json() == {"ok": True}
+    assert client.post("/api/sources/a/list/sideways").status_code == 400
+    assert client.post("/api/sources", json={"repo": "not a repo"}).status_code == 400
+    st = pipeline.pipeline_status(conn)["sources"]
+    assert [b["name"] for b in st["boards"]] == ["Acme Robotics"] and st["boards"][0]["token"] == "acme"
+    assert any(l["repo"] == "a/list" for l in st["lists"])

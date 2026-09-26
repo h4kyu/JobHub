@@ -28,7 +28,6 @@ def test_status_reports_backlogs_and_the_reason_a_cap_left_jobs_unrefined(conn):
     add(conn, 10, "Engineering Intern", desc=None, raw={"fetch_failures": db.FETCH_GIVE_UP})   # unreadable
     add(conn, 11, "Compiler Intern", desc=None, raw={"fetch_failures": 0})                      # still to fetch
     st = pipeline.pipeline_status(conn)
-    assert st["ingest"]["desc"]["unreadable"] == 1 and st["ingest"]["desc"]["pending_fetch"] == 1
     assert st["score"]["pending"] == 4 and st["funnel"]["unscored"] == 5
     fastscore.run_fast_scoring(conn, None, use_model=False, log=lambda *_: None)
     st = pipeline.pipeline_status(conn)
@@ -56,3 +55,24 @@ def test_set_profile_value_edits_in_place_and_keeps_comments(tmp_path, monkeypat
         config.set_profile_value("llm.run_token_budget", "lots")
     assert "run_token_budget: 1000000" in y.read_text()               # a rejected edit leaves the file alone
     config.load_profile.cache_clear()
+
+
+def test_warning_only_when_the_ai_pass_was_cut_short():
+    w = pipeline.refine_warning({"reason": "subscription usage limit hit"}, 12)
+    assert "usage limit" in w and "12 unclear postings are" in w and "resets" in w
+    assert "per-run token cap" in pipeline.refine_warning({"reason": "run cap"}, 1)
+    assert "weekly token cap" in pipeline.refine_warning({"reason": "weekly cap"}, 3)
+    assert pipeline.refine_warning({"reason": "subscription usage limit hit"}, 0) is None   # nothing left unrefined
+    assert pipeline.refine_warning({"reason": "model off for this run"}, 9) is None          # switched off, not interrupted
+    assert pipeline.refine_warning({}, 9) is None
+
+
+def test_status_carries_the_interruption_warning_into_the_limits(conn):
+    for i in range(3):
+        add(conn, i, "Software Engineer Intern")
+    fastscore.run_fast_scoring(conn, None, use_model=False, log=lambda *_: None)
+    db.set_meta(conn, "last_score", json.dumps({"at": db.now(), "deferred": 3, "reason": "subscription usage limit hit"}))
+    st = pipeline.pipeline_status(conn)
+    assert "usage limit" in st["triage"]["warning"]
+    refine = [l for l in st["limits"] if l["kind"] == "refine"]
+    assert len(refine) == 1 and refine[0]["level"] == "warn" and refine[0]["text"] == st["triage"]["warning"]

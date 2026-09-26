@@ -58,23 +58,6 @@ against existing deep evaluations. All the knobs are in `profile.yaml` (`fast_sc
 3. **Discovery** (`jobhub discover`, or "Find more companies" in the UI) — Claude researches companies matching your
    profile via web search. Companies with a readable board are approved automatically; the rest are kept for reference.
 
-## What to learn next
-
-The evaluation pipeline answers "can I get this today". `jobhub skills` answers the opposite: for the roles
-that are currently out of reach — GPU, compilers, performance, HFT, systems — what do the postings actually
-require? It mines them whatever bucket they landed in (an archived job you have no chance at is exactly the
-useful signal), aggregates a demand table, and writes one ordered learning plan.
-
-```sh
-jobhub skills                            # mine ~40 postings -> digests/skills.md, and the Skills tab in the UI
-jobhub skills --limit 24 --no-plan       # demand table only, fewer calls
-jobhub skills --bucket reach             # restrict to one bucket
-jobhub skills --show                     # print the stored report without regenerating
-```
-
-Which fields count as "aspirational" is `target_domains` in `profile.yaml` — edit the keyword lists to steer it.
-Editing them never triggers re-evaluation. Run it monthly, not per-run.
-
 ## Company discovery
 
 ```sh

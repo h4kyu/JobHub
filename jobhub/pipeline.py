@@ -15,6 +15,23 @@ from . import config, db, fastscore
 POLLABLE = ("greenhouse", "lever", "ashby", "workday")
 
 
+#: `meta.last_score.reason` values that mean the AI pass was cut short (as opposed to switched off), and what to tell the user.
+_INTERRUPTIONS = {
+    "subscription usage limit hit": ("Scoring was interrupted because your Claude usage limit was reached.",
+                                     "Run Score again once your limit resets."),
+    "run cap": ("Scoring stopped at your per-run token cap.", "Run Score again, or raise the cap in Settings."),
+    "weekly cap": ("Scoring stopped at your weekly token cap.", "Run Score again next week, or raise the cap in Settings."),
+}
+
+
+def refine_warning(last_score: dict[str, Any], awaiting: int) -> str | None:
+    """A message when the last score run was cut short and postings are still on their free score only, else None."""
+    cut = _INTERRUPTIONS.get(last_score.get("reason") or "")
+    if not cut or not awaiting:
+        return None
+    return f"{cut[0]} {awaiting:,} unclear posting{'s are' if awaiting != 1 else ' is'} showing the free score only. {cut[1]}"
+
+
 def _q(conn: sqlite3.Connection, sql: str, *params: Any) -> int:
     return int(conn.execute(sql, params).fetchone()[0] or 0)
 
@@ -40,21 +57,24 @@ def pipeline_status(conn: sqlite3.Connection) -> dict[str, Any]:
     profile = config.load_profile()
     llm, fs = profile.llm, profile.fast_scoring
     phash = config.profile_hash()
-    give_up = db.FETCH_GIVE_UP
 
     # ---- stage 0/1: sources and ingest
     repos = {r["status"]: r["n"] for r in conn.execute("SELECT status, COUNT(*) n FROM repo_sources GROUP BY status")}
     polled = _q(conn, "SELECT COUNT(*) FROM companies WHERE status = 'approved' AND ats_token IS NOT NULL AND ats_type IN (%s)"
                 % ",".join("?" * len(POLLABLE)), *POLLABLE)
+    open_by_source = {r["source"]: r["n"] for r in conn.execute("SELECT source, COUNT(*) n FROM jobs WHERE active = 1 GROUP BY source")}
+    lists = [{"repo": r["repo"], "kind": r["kind"], "status": r["status"], "origin": r["source"], "checked": r["last_checked"],
+              "error": r["last_error"], "postings": open_by_source.get(f"{r['kind']}:{r['repo']}", 0)}
+             for r in conn.execute("SELECT * FROM repo_sources WHERE status != 'disabled' ORDER BY status = 'broken', last_jobs DESC")]
+    boards = []
+    for r in conn.execute("SELECT * FROM companies WHERE status = 'approved' AND ats_token IS NOT NULL AND ats_type IN (%s) ORDER BY name COLLATE NOCASE"
+                          % ",".join("?" * len(POLLABLE)), POLLABLE):
+        key = f"{r['ats_type']}:{r['ats_token'].split('/')[0] if r['ats_type'] == 'workday' else r['ats_token']}"
+        boards.append({"slug": r["slug"], "name": r["name"], "kind": r["ats_type"], "token": r["ats_token"], "postings": open_by_source.get(key, 0)})
     last_ingest = conn.execute("SELECT * FROM runs WHERE kind IN ('ingest', 'run') ORDER BY id DESC LIMIT 1").fetchone()
     active = _q(conn, "SELECT COUNT(*) FROM jobs WHERE active = 1")
     desc = {
         "text": _q(conn, "SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text IS NOT NULL AND description_text != ''"),
-        "never": _q(conn, "SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text = ''"),
-        "pending_fetch": _q(conn, f"SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text IS NULL "
-                                  f"AND COALESCE(json_extract(raw, '$.fetch_failures'), 0) < {give_up}"),
-        "unreadable": _q(conn, f"SELECT COUNT(*) FROM jobs WHERE active = 1 AND description_text IS NULL "
-                               f"AND COALESCE(json_extract(raw, '$.fetch_failures'), 0) >= {give_up}"),
     }
 
     # ---- stage 2: prefilter
@@ -84,19 +104,16 @@ def pipeline_status(conn: sqlite3.Connection) -> dict[str, Any]:
     def limit(level: str, stage: str, text: str, action: str, **kw: Any) -> None:
         limits.append({"level": level, "stage": stage, "text": text, "action": action, **kw})
 
-    if desc["pending_fetch"]:
-        limit("warn", "ingest", f"{desc['pending_fetch']} postings are waiting for their description to be fetched.",
-              "Run Ingest (no fetch limit).", kind="ingest")
-    if desc["unreadable"]:
-        limit("info", "ingest", f"{desc['unreadable']} postings could not be read after {give_up} attempts (the site blocks scraping); "
-              "they are scored from title and company only and tagged 'check manually'.", "Retry the fetch, or open them by hand.", kind="retry")
     if pending_score:
-        limit("warn", "score", f"{pending_score} readable postings have no score yet.", "Run Score (free, local).", kind="score")
-    if awaiting:
+        limit("warn", "score", f"{pending_score} readable postings have no score yet.", "Run Score.", kind="score")
+    warning = refine_warning(last_score, awaiting)
+    if warning:
+        limit("warn", "score", warning, "", kind="refine")
+    elif awaiting:
         reason = last_score.get("reason") or "not yet refined"
-        limit("warn", "triage", f"{awaiting} ambiguous postings are showing their local score only ({reason}).",
-              "Refine them now, or raise llm.run_token_budget / set it to 0.", kind="refine")
-    if llm.weekly_token_budget and week >= llm.weekly_token_budget:
+        limit("info", "score", f"{awaiting} ambiguous postings are showing their local score only ({reason}).",
+              "The next Score run will refine them.", kind="refine")
+    if not warning and llm.weekly_token_budget and week >= llm.weekly_token_budget:
         limit("warn", "triage", f"The weekly token cap ({llm.weekly_token_budget:,}) is used up, so no ambiguous posting is refined.",
               "Raise or clear llm.weekly_token_budget (0 = off).")
     if not llm.triage_enabled:
@@ -104,14 +121,14 @@ def pipeline_status(conn: sqlite3.Connection) -> dict[str, Any]:
 
     return {
         "phash": phash,
-        "sources": {"repos": repos, "polled": polled,
+        "sources": {"repos": repos, "polled": polled, "lists": lists, "boards": boards,
                     "last_ingest": dict(last_ingest) if last_ingest else None},
         "ingest": {"active": active, "desc": desc},
         "prefilter": {"count": fun["rules"], "reasons": [(r["r"], r["n"]) for r in reasons]},
         "score": {"pending": pending_score, "no": fun["local_no"], "ambiguous": fun["local_ambiguous"], "yes": fun["local_yes"],
                   "unread": unread_rows, "hi": fs.hi, "lo": fs.lo},
         "triage": {"awaiting": awaiting, "done": fun["triage"], "enabled": llm.triage_enabled, "run_cap": llm.run_token_budget,
-                   "weekly_cap": llm.weekly_token_budget, "week_used": week, "last": last_score,
+                   "weekly_cap": llm.weekly_token_budget, "week_used": week, "last": last_score, "warning": warning,
                    "batch": llm.triage_batch_size, "min_score": llm.triage_min_score, "model": llm.triage_model},
         "deep": {"count": deep},
         "output": {"buckets": buckets},

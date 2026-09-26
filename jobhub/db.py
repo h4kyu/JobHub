@@ -106,22 +106,6 @@ CREATE TABLE IF NOT EXISTS meta (
     value TEXT
 );
 
-CREATE TABLE IF NOT EXISTS skill_demands (
-    id INTEGER PRIMARY KEY,
-    generated_at TEXT NOT NULL,
-    skill TEXT NOT NULL,
-    category TEXT,
-    status TEXT,                -- have | partial | missing (vs the candidate profile)
-    domains TEXT,               -- JSON list of target-domain names it was demanded in
-    required_count INTEGER NOT NULL DEFAULT 0,
-    preferred_count INTEGER NOT NULL DEFAULT 0,
-    demand_count INTEGER NOT NULL DEFAULT 0,
-    job_ids TEXT,               -- JSON list
-    companies TEXT,             -- JSON list of example company names
-    evidence TEXT               -- JSON list of short quotes
-);
-CREATE INDEX IF NOT EXISTS idx_skill_demands_gen ON skill_demands(generated_at);
-
 CREATE TABLE IF NOT EXISTS runs (
     id INTEGER PRIMARY KEY,
     kind TEXT NOT NULL,
@@ -372,24 +356,6 @@ def tokens_used_since(conn: sqlite3.Connection, days: float, kind: str | None = 
     return int(conn.execute(sql, params).fetchone()[0])
 
 
-def tokens_by_kind(conn: sqlite3.Connection, days: float) -> list[sqlite3.Row]:
-    from datetime import datetime, timedelta, timezone
-
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-    return conn.execute(
-        """SELECT kind, COUNT(*) runs, COALESCE(SUM(llm_calls), 0) calls,
-                  COALESCE(SUM(llm_input_tokens), 0) inp, COALESCE(SUM(llm_output_tokens), 0) outp
-           FROM runs WHERE started_at >= ? GROUP BY kind ORDER BY inp + outp DESC""", (cutoff,)).fetchall()
-
-
-def reset_fetch_failures(conn: sqlite3.Connection) -> int:
-    """Give every job whose description could not be fetched another set of attempts (see FETCH_GIVE_UP)."""
-    cur = conn.execute(
-        """UPDATE jobs SET raw = json_set(COALESCE(raw, '{}'), '$.fetch_failures', 0)
-           WHERE active = 1 AND description_text IS NULL AND COALESCE(json_extract(raw, '$.fetch_failures'), 0) > 0""")
-    return cur.rowcount
-
-
 def jobs_needing_description(conn: sqlite3.Connection, limit: int | None = None) -> list[sqlite3.Row]:
     sql = f"""SELECT * FROM jobs WHERE active = 1 AND description_text IS NULL
              AND COALESCE(json_extract(raw, '$.fetch_failures'), 0) < {FETCH_GIVE_UP}
@@ -482,17 +448,18 @@ def set_meta(conn: sqlite3.Connection, key: str, value: str) -> None:
     conn.execute("INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", (key, value))
 
 
-def upsert_repo_source(conn: sqlite3.Connection, repo: str, *, kind: str | None, source: str, status: str = "active", **fields: Any) -> None:
+def upsert_repo_source(conn: sqlite3.Connection, repo: str, *, kind: str | None, source: str, status: str | None = "active", **fields: Any) -> None:
+    """status=None leaves an existing repo's status alone (a new repo is then active); a disabled repo is never re-enabled here."""
     existing = conn.execute("SELECT * FROM repo_sources WHERE repo = ?", (repo,)).fetchone()
     if existing is None:
         cols = ["repo", "kind", "source", "status", "added_at"] + list(fields)
-        vals = [repo, kind, source, status, now()] + list(fields.values())
+        vals = [repo, kind, source, status or "active", now()] + list(fields.values())
         conn.execute(f"INSERT INTO repo_sources ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
         return
     updates = {k: v for k, v in fields.items() if v is not None}
     if kind:
         updates["kind"] = kind
-    if existing["status"] != "disabled":
+    if status and existing["status"] != "disabled":
         updates["status"] = status
     if updates:
         sets = ", ".join(f"{k} = ?" for k in updates)

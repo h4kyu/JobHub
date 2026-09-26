@@ -119,11 +119,36 @@ def sync_repo_sources(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _repo_is_gone(e: Exception) -> bool:
+    """A list that 404s/410s or returns something unparseable is broken. A network drop, timeout, 429 or 5xx says nothing
+    about the repo, so it must not switch it off."""
+    if isinstance(e, httpx.HTTPStatusError):
+        return e.response.status_code in (404, 410, 451)
+    return isinstance(e, ValueError)
+
+
+def record_repo_failure(conn: sqlite3.Connection, repo: str, e: Exception) -> None:
+    db.upsert_repo_source(conn, repo, kind=None, source="config", status="broken" if _repo_is_gone(e) else None,
+                          last_checked=db.now(), last_error=str(e)[:200])
+
+
+def record_repo_success(conn: sqlite3.Connection, repo: str, n_jobs: int) -> None:
+    """Back to active, unless it was broken and still parses to almost nothing (the bar discovery uses to enable a repo)."""
+    from .sources.repo_discovery import MIN_JOBS_TO_ENABLE
+
+    row = conn.execute("SELECT status FROM repo_sources WHERE repo = ?", (repo,)).fetchone()
+    status = "broken" if row and row["status"] == "broken" and n_jobs < MIN_JOBS_TO_ENABLE else "active"
+    db.upsert_repo_source(conn, repo, kind=None, source="config", status=status, last_checked=db.now(), last_jobs=n_jobs,
+                          last_error=None)
+
+
 def build_sources(conn: sqlite3.Connection) -> list[Source]:
     profile = config.load_profile()
     sync_repo_sources(conn)
     sources: list[Source] = []
-    for r in db.list_repo_sources(conn, status="active"):
+    for r in db.list_repo_sources(conn):
+        if r["status"] == "disabled":
+            continue   # broken lists are tried again every run: only a disabled one stays off
         sources.append(SimplifySource(r["repo"]) if r["kind"] == "simplify" else GithubReadmeSource(r["repo"]))
     for c in db.list_companies(conn, status="approved"):
         cls = ATS_SOURCES.get(c["ats_type"] or "")
@@ -197,12 +222,10 @@ def run_ingest(conn: sqlite3.Connection, *, fetch_limit: int | None = None, log:
             stats["errors"].append(f"{src.name}: {str(e)[:200]}")
             log(f"source failed: {src.name}: {str(e)[:120]}")
             if src.name.startswith(("simplify:", "readme:")):
-                db.upsert_repo_source(conn, src.name.split(":", 1)[1], kind=None, source="config", status="broken",
-                                      last_checked=db.now(), last_error=str(e)[:200])
+                record_repo_failure(conn, src.name.split(":", 1)[1], e)
             continue
         if src.name.startswith(("simplify:", "readme:")):
-            db.upsert_repo_source(conn, src.name.split(":", 1)[1], kind=None, source="config", status="active",
-                                  last_checked=db.now(), last_jobs=len(jobs), last_error=None)
+            record_repo_success(conn, src.name.split(":", 1)[1], len(jobs))
         stats["sources"] += 1
         seen_ids: list[int] = []
         new = 0
