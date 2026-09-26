@@ -308,9 +308,88 @@ def _run_fast_scoring(conn: sqlite3.Connection, backend: LLMBackend | None, *, l
     return stats
 
 
+def reprefilter(conn: sqlite3.Connection, *, deep: bool = False, dry_run: bool = False,
+                log: Callable[[str], None] = print) -> dict[str, int]:
+    """Re-run the deterministic prefilter over jobs that already have a (non-rejected) evaluation, and archive
+    the ones it now rejects. Free, and reversible like any other hard reject.
+
+    This is what applies a tightened *non-model-visible* rule — a new dealbreaker word, a `degrees` ceiling —
+    to jobs that were already scored. Without it they keep their old row forever: `jobs_pending_fast` only ever
+    looks at jobs with *no* evaluation for the current profile_hash, and these have one.
+
+    `deep=False` (the default, used by `recompute_fast` on every run) touches only `local` / `triage` rows, which
+    cost nothing to recreate. `deep=True` also replaces full-rubric rows, discarding that rubric detail — so it
+    is behind `jobhub rescore --reprefilter`, never automatic.
+    """
+    from .evaluate import store_hard_reject
+
+    profile = config.load_profile()
+    phash = config.profile_hash()
+    sql = """SELECT e.job_id, e.model, j.title, j.location, j.terms, j.sponsorship, j.description_text
+             FROM evaluations e JOIN jobs j ON j.id = e.job_id
+             WHERE e.profile_hash = ? AND e.hard_reject_reason IS NULL AND j.active = 1"""
+    if not deep:
+        sql += " AND e.model IN ('local', 'triage')"
+    counts: dict[str, int] = {}
+    for r in conn.execute(sql, (phash,)).fetchall():
+        reason = prefilter.check(profile, title=r["title"], location=r["location"] or "", terms=db.uj(r["terms"], None),
+                                 description=r["description_text"], sponsorship=r["sponsorship"])
+        if not reason:
+            continue
+        counts[reason] = counts.get(reason, 0) + 1
+        if not dry_run:
+            store_hard_reject(conn, r["job_id"], reason, "prefilter", phash)   # same unique key: replaces the row
+    if not dry_run:
+        conn.commit()
+    total = sum(counts.values())
+    if total:
+        detail = ", ".join(f"{k} {v}" for k, v in sorted(counts.items(), key=lambda kv: -kv[1]))
+        log(f"prefilter {'would reject' if dry_run else 'now rejects'} {total} already-scored jobs ({detail})")
+    counts.update(unreject_stale(conn, dry_run=dry_run, log=log))
+    return counts
+
+
+def unreject_stale(conn: sqlite3.Connection, *, dry_run: bool = False,
+                   log: Callable[[str], None] = print) -> dict[str, int]:
+    """The other half of `reprefilter`: drop prefilter rejections the rules no longer justify, so a *relaxed*
+    rule frees its jobs instead of archiving them forever. Deleting the row makes the job pending again
+    (`db.jobs_pending_fast` looks for jobs with no evaluation at this profile_hash) and the next `run` gives it
+    a free local score. Only ever touches `model='prefilter'` rows, which cost nothing to recreate."""
+    profile = config.load_profile()
+    phash = config.profile_hash()
+    rows = conn.execute(
+        """SELECT e.id, e.hard_reject_reason, j.title, j.location, j.terms, j.sponsorship, j.description_text
+           FROM evaluations e JOIN jobs j ON j.id = e.job_id
+           WHERE e.profile_hash = ? AND e.model = 'prefilter' AND j.active = 1""", (phash,)).fetchall()
+    freed: dict[str, int] = {}
+    changed = 0
+    for r in rows:
+        reason = prefilter.check(profile, title=r["title"], location=r["location"] or "", terms=db.uj(r["terms"], None),
+                                 description=r["description_text"], sponsorship=r["sponsorship"])
+        if reason == r["hard_reject_reason"]:
+            continue
+        key = f"freed: {r['hard_reject_reason']}" if reason is None else f"{r['hard_reject_reason']} -> {reason}"
+        freed[key] = freed.get(key, 0) + 1
+        changed += 1
+        if dry_run:
+            continue
+        if reason is None:
+            conn.execute("DELETE FROM evaluations WHERE id = ?", (r["id"],))
+        else:
+            conn.execute("UPDATE evaluations SET hard_reject_reason = ? WHERE id = ?", (reason, r["id"]))
+    if not dry_run:
+        conn.commit()
+    if changed:
+        detail = ", ".join(f"{k} {v}" for k, v in sorted(freed.items(), key=lambda kv: -kv[1]))
+        log(f"{changed} stale prefilter rejections {'would be' if dry_run else ''} re-judged ({detail})")
+    return freed
+
+
 def recompute_fast(conn: sqlite3.Connection, log: Callable[[str], None] = print) -> int:
     """Re-apply the current fast_scoring knobs to stored fast rows, with no model calls: local rows are re-scored
-    from the posting, triage rows keep their stored triage score and are re-combined and re-bucketed."""
+    from the posting, triage rows keep their stored triage score and are re-combined and re-bucketed. Runs
+    `reprefilter` first so a tightened deterministic rule takes effect on rows that already exist."""
+    reprefilter(conn, log=log)
     profile = config.load_profile()
     fs = profile.fast_scoring
     phash = config.profile_hash()

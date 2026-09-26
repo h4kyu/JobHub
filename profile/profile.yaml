@@ -5,6 +5,14 @@ roles:                      # target role families (used in prompts and discover
   - "Software Engineering (systems / infrastructure / performance)"
   - "Machine Learning / AI Infrastructure"
   - "Robotics / Autonomy Software"
+degrees: ["bachelor"]       # degrees you hold or are enrolled in: associate | bachelor | master | phd.
+                            # The highest one is a ceiling: a posting is hard-rejected only when the LOWEST degree
+                            # it accepts is above it, so "Intern, PhD, Quantitative SWE" and "MS/PhD" go while
+                            # "BS/MS" and "BS, MS or PhD" stay. Graduation dates and year of study are never a
+                            # reason to reject (a Waterloo BASc runs to 2029 and sits outside many stated
+                            # windows while still being eligible) — see jobhub/degree.py. Empty list = off.
+                            # Not model-visible: editing this re-scores nothing. Apply it to jobs already scored
+                            # with `jobhub rescore --recompute-only` (add --reprefilter to include deep rows).
 term: "Winter 2027"         # target work term (Jan-Apr 2027); postings whose start doesn't overlap it are hard-rejected
 term_also_accept: ["Spring 2027"]   # US "Spring" = Jan-May start; same window as a Waterloo Winter term
 alt_terms: ["Summer 2027"]  # second track: accepted and scored like the primary term, but shown in its own
@@ -26,7 +34,10 @@ dealbreakers:               # case-insensitive substrings; a match hard-rejects 
   unpaid: ["unpaid", "volunteer position", "for academic credit only"]
   clearance: ["security clearance", "top secret", "ts/sci", "secret clearance"]
   citizenship: ["u.s. citizenship required", "must be a u.s. citizen", "us citizens only", "u.s. citizens only", "must be a us citizen"]
-  level: ["phd required", "phd candidates only", "currently pursuing a phd"]
+  level: []                 # degree level lives in `degrees:` above (jobhub/degree.py reads the accepted set).
+                            # These were plain substrings, so "currently pursuing a phd" also rejected
+                            # "currently pursuing a PhD, MS or BS" and anything naming a PhD under
+                            # "Preferred qualifications". Add level words here only for cases that filter misses.
   location_exclude: []      # e.g. ["on-site in Austin"]
   other: []
   sponsorship_values: ["citizenship is required"]   # matched against aggregators' structured sponsorship field

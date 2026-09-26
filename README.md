@@ -56,6 +56,7 @@ jobhub digest                       # writes digests/YYYY-MM-DD.md
 jobhub show --bucket likely         # or reach / wildcard; `jobhub show <id>` for one
 jobhub status <id> applied          # new | shortlisted | applied | interview | rejected | offer | skipped
 jobhub rescore --carry-over         # after a change that only *widens* acceptance
+jobhub rescore --reprefilter        # apply a tightened deterministic rule to jobs already scored (--dry-run first)
 jobhub discover                     # Claude researches companies matching your profile
 jobhub companies resolve            # find ATS boards for companies missing one
 ```
@@ -83,6 +84,12 @@ are scored on their title alone rather than being dropped.
 - **Two work terms.** `term` + `term_also_accept` is the primary track; `alt_terms` is a second one, scored the
   same way but shown under its own chip and digest section. Postings that state no term — most board postings —
   appear under both. Empty `alt_terms` to go back to one.
+- **Degree** (`degrees:` in `profile.yaml`, or the Profile page): the degrees you hold or are pursuing. The highest
+  is a ceiling — a posting is archived only when the *lowest* degree it accepts is above it, so "Intern, PhD,
+  Quantitative SWE" and "MS/PhD" go while "BS/MS" and "BS, MS or PhD" stay. A PhD mentioned under "Preferred
+  qualifications", in a pay band, or as "a plus" is not a requirement. **Graduation dates and year of study are
+  never a reason to reject.** Free and not model-visible: changing it re-scores nothing, and
+  `jobhub rescore --recompute-only` applies it to jobs already scored. Empty the list to switch it off.
 - Editing `prompts/` or `schemas/` means bumping `RUBRIC_VERSION` in `jobhub/config.py`, then `jobhub rescore`.
 
 ## Repo layout

@@ -81,13 +81,23 @@ def rescore(limit: Optional[int] = typer.Option(None),
             recompute_only: bool = typer.Option(False, help="Only recompute buckets from stored sub-scores (no model calls)"),
             carry_over: bool = typer.Option(False, help="Re-stamp existing scores onto the new profile hash instead of "
                                                         "re-running them — only when the profile change WIDENS what is "
-                                                        "acceptable (e.g. adding alt_terms). No model calls.")) -> None:
+                                                        "acceptable (e.g. adding alt_terms). No model calls."),
+            reprefilter_deep: bool = typer.Option(False, "--reprefilter", help="Also re-run the deterministic prefilter "
+                                                  "over full-rubric rows, archiving ones a tightened rule now rejects "
+                                                  "(discards that rubric detail). Free. Local/triage rows are always re-filtered."),
+            dry_run: bool = typer.Option(False, "--dry-run", help="With --reprefilter: report what it would archive, write nothing.")) -> None:
     """Recompute buckets with current weights, then re-evaluate jobs whose evaluation is stale (profile/rubric changed)."""
     with db.session() as conn:
         from .evaluate import carry_over_evaluations, mark_stale_for_rescore, recompute_buckets
 
-        from .fastscore import recompute_fast
+        from .fastscore import recompute_fast, reprefilter
 
+        if reprefilter_deep:
+            counts = reprefilter(conn, deep=True, dry_run=dry_run, log=typer.echo)
+            if not counts:
+                typer.echo("prefilter rejects nothing that is already scored")
+            if dry_run:
+                return
         typer.echo(f"{recompute_buckets(conn)} evaluations re-bucketed with current weights/thresholds")
         typer.echo(f"{recompute_fast(conn)} fast-scored rows re-scored with current fast_scoring settings")
         if carry_over:

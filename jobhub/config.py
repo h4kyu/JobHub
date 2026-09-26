@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # Bump when prompts/schemas/scoring semantics change so stale evaluations get re-scored.
 RUBRIC_VERSION = "2"  # v2: tag-based summaries (fit_tags/gap_tags)
@@ -34,7 +34,12 @@ class Dealbreakers(BaseModel):
     clearance: list[str] = ["security clearance", "top secret", "ts/sci", "secret clearance"]
     citizenship: list[str] = ["u.s. citizenship required", "must be a u.s. citizen", "us citizens only",
                               "u.s. citizens only", "must be a us citizen"]
-    level: list[str] = ["phd required", "phd candidates only", "currently pursuing a phd"]
+    # Degree level is handled properly by `profile.degrees` + jobhub/degree.py, which reads the *accepted set*
+    # and only rejects when its lowest member is above what you hold. The old defaults here were plain
+    # substrings, so "currently pursuing a phd" also rejected "currently pursuing a PhD, MS or BS" and every
+    # posting that mentions a PhD under "Preferred qualifications". Left empty and kept for anything else
+    # level-shaped you want to reject outright.
+    level: list[str] = []
     location_exclude: list[str] = []
     other: list[str] = []
     # Matched against an aggregator's structured sponsorship field (e.g. Simplify's "U.S. Citizenship is Required").
@@ -207,6 +212,12 @@ class SourcesConfig(BaseModel):
 
 class Profile(BaseModel):
     roles: list[str] = []
+    #: Degrees held or currently being pursued (`associate` / `bachelor` / `master` / `phd`). The highest one
+    #: is a ceiling: `jobhub/degree.py` hard-rejects postings whose *lowest* accepted degree is above it, so a
+    #: "PhD, Quantitative Software Engineer" goes but a "BS/MS" one stays. Empty list = no degree filtering.
+    #: Not model-visible on purpose — the deterministic filter is complete and a hash change would re-score
+    #: everything (the deep rubric never sees these postings, since prefilter rejects them first).
+    degrees: list[str] = ["bachelor"]
     term: str = ""
     term_also_accept: list[str] = []          # other term labels that mean the same start window (e.g. US "Spring 2027")
     alt_terms: list[str] = []                 # a second acceptable work term, tracked separately (e.g. "Summer 2027")
@@ -222,6 +233,18 @@ class Profile(BaseModel):
     fast_scoring: FastScoring = FastScoring()
     sources: SourcesConfig = SourcesConfig()
     target_domains: list[TargetDomain] = Field(default_factory=lambda: list(DEFAULT_TARGET_DOMAINS))
+
+    @field_validator("degrees")
+    @classmethod
+    def _known_degrees(cls, v: list[str]) -> list[str]:
+        """A typo ("bachelors", "BSc") would silently switch the degree filter off, so reject it loudly."""
+        from .degree import LEVELS
+
+        out = [str(d).strip().lower() for d in v if str(d).strip()]
+        bad = [d for d in out if d not in LEVELS]
+        if bad:
+            raise ValueError(f"unknown degree(s) {bad}; use any of {sorted(LEVELS, key=LEVELS.get)}")
+        return out
 
 
 @lru_cache(maxsize=1)
@@ -255,6 +278,9 @@ PROFILE_FIELDS: dict[str, tuple[str, bool]] = {
     "strict_location": ("bool", True),
     "work_authorization": ("list", True),
     "roles": ("list", True),
+    # Not model-visible: the deterministic filter in jobhub/degree.py is what acts on it, so editing it
+    # re-scores nothing. Apply it to jobs already scored with `jobhub rescore --recompute-only`.
+    "degrees": ("list", False),
     "dealbreakers.unpaid": ("list", False),
     "dealbreakers.clearance": ("list", False),
     "dealbreakers.citizenship": ("list", False),

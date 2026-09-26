@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
+from . import degree
 from .config import Profile
 
 _SEASON_RE = re.compile(r"\b(spring|summer|fall|autumn|winter)\s*(?:of\s*)?(20\d\d)\b", re.I)
@@ -191,4 +192,7 @@ def check(profile: Profile, *, title: str, location: str, terms: list[str] | Non
     ):
         if _contains_any(haystack, needles):
             return reason
-    return None
+    # Last, so a posting that is *also* clearance-only or unpaid keeps that more fundamental reason.
+    # Degree level, not graduation date: rejects only a posting whose lowest accepted degree is above the
+    # highest in `profile.degrees` ("PhD, Quantitative SWE" goes, "BS/MS" stays). See jobhub/degree.py.
+    return degree.degree_mismatch(profile.degrees, title, description)

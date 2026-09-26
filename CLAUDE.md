@@ -93,6 +93,39 @@ when testing. `jobhub smoke` is the cheap sanity check.
   `description_text = ''` (empty string = "never fetch"; `NULL` = "needs fetch"). After `db.FETCH_GIVE_UP` failed
   fetches a `NULL` job is still evaluated, on metadata alone, and flagged `description_unavailable` ("unread" in the digest) —
   postings from sites that block scraping (Tesla, Oracle HCM) must never be silently dropped.
+- **Retro-applying a deterministic rule.** `fastscore.reprefilter()` re-runs `prefilter.check` over jobs that
+  *already* have an evaluation and archives what a tightened rule now rejects — without it a new dealbreaker or
+  degree ceiling changes nothing, because `db.jobs_pending_fast` only ever looks at jobs with **no** evaluation
+  for the current `profile_hash`. `unreject_stale()` is the other half: it re-judges existing `model='prefilter'`
+  rows, relabels the ones whose reason changed and *deletes* the ones no longer rejected, so a **relaxed** rule
+  frees its jobs (they become pending and get a free local score) instead of staying archived forever. Both run
+  inside `recompute_fast`, so every `run` / `rescore` keeps the archive honest; `jobhub rescore --reprefilter`
+  extends the first pass to full-rubric rows (it discards that rubric detail, hence the flag) and `--dry-run`
+  reports without writing. Reason ordering in `prefilter.check` is reporting order — the degree check is
+  deliberately **last** so a posting that is also clearance-only or unpaid keeps that more fundamental reason.
+- **Degree ceiling** (`jobhub/degree.py`, `profile.yaml: degrees`, added 2026-09-26). Waymo posts
+  "2027 Summer Intern, PhD, Quantitative Software Engineer" beside "…, BS/MS, Software Engineering"; the first
+  fast-scored 100 and is unapplicable. `degrees` lists what you hold or are pursuing (`associate`/`bachelor`/
+  `master`/`phd`) and the highest is a ceiling. **The entire risk is over-rejecting**, since most postings that
+  mention a PhD accept a bachelor's, so the rule is asymmetric: `accepted_levels()` reads the *set* of degrees a
+  posting accepts and only rejects when its **lowest** member is above the ceiling (`{phd}` and `{master, phd}`
+  reject; `{bachelor, master, phd}` does not). A title naming degrees is authoritative and the description is not
+  read at all (Waymo/AMD/NVIDIA/BlackRock all encode the level there, and titles carry no boilerplate); otherwise
+  only unhedged *requirement clauses* count, which means: descriptions are split into clauses (on punctuation
+  **and spaced dashes** — flattened HTML bullets often carry no punctuation, so "…pursuing a PhD degree in CS -
+  Knowledge of… Preferred Qualifications -…" would otherwise read as one clause and hedge itself away); clauses
+  under a "Preferred qualifications" heading are skipped until the next required-style heading (Microsoft's
+  generic SWE intern lists a Bachelor's as basic and a Doctorate as preferred); each clause is judged **alone**,
+  never with its neighbour; and `preferred` / `a plus` / `also eligible` / pay-band clauses set no ceiling.
+  Dotted abbreviations are un-dotted before splitting or "Ph.D. or B.S." loses the B.S. and flips to a reject.
+  **Graduation dates and years of study are never a reason to reject** — a Waterloo BASc runs to 2029 and sits
+  outside many stated windows while staying eligible, so no date is parsed and year words ("sophomore",
+  "final year of a four-year program") are read in one direction only: they *add* `bachelor`, which can only
+  make a posting pass. `tests/test_degree.py` pins that invariant and every real-posting case above.
+  Not model-visible (editing re-scores nothing; the deep rubric never sees these postings, prefilter rejects them
+  first). Applied 2026-09-26 over the existing DB: 228 archived as `phd-only` / `master-only`, 0 left visible.
+  This supersedes `dealbreakers.level`, whose defaults were plain substrings — "currently pursuing a phd" also
+  rejected "currently pursuing a PhD, MS or BS"; that list is now empty by default.
 - **Two work-term tracks.** `profile.yaml: alt_terms` (added 2026-09-09 for Summer 2027 alongside Winter/Spring)
   is a second acceptable term. The model sees one flat `acceptable_term_labels` list — it must not hard-reject the
   alternate term — and the split happens in code: `prefilter.term_track()` labels each posting `primary` / `alt` /

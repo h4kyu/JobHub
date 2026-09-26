@@ -64,8 +64,10 @@ button.ghost { background: transparent }
 .btn.md { height: 48px; padding: 0 20px; font-size: 1rem }
 
 /* ---------------------------------------------------------------- cards */
-.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: 0 1px 2px var(--shadow) }
-.card.pad { padding: 20px 22px }
+/* Padding belongs on .card itself: a bare `class="card"` is the common case (job page, digest),
+   and a modifier-only rule silently leaves that content touching the border. */
+.card { padding: 18px 20px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-card); box-shadow: 0 1px 2px var(--shadow) }
+.card.flush { padding: 0 }
 .lift { transition: box-shadow .22s ease, transform .22s cubic-bezier(.16,1,.3,1) }
 .lift:hover { box-shadow: 0 6px 22px var(--shadow); transform: translateY(-1px) }
 .chead { display: flex; align-items: baseline; gap: 10px; margin-bottom: 4px }
