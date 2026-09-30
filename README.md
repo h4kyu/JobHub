@@ -4,6 +4,8 @@ A local internship search engine. It pulls postings from GitHub aggregator lists
 them, drops the ones that break your hard rules, scores everything that survives, and shows you the shortlist —
 sorted into **Likely**, **Reach** and **Wildcard**.
 
+![JobHub dashboard](docs/dashboard.png)
+
 Every model call goes through headless Claude Code (`claude -p`) on your subscription. No API key, no per-token bill.
 
 **Most of the work is free.** Ingest, dedupe, the prefilter and a deterministic 0–100 score cost nothing. Only the

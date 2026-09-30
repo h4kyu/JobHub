@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from . import config, db, prefilter, roletype
-from .config import FastScoring, Profile, TargetDomain
+from .config import FastScoring, Profile
 from .llm.base import LLMBackend, LLMRateLimitError
 from .models import Bucket
 from .normalize import slugify
@@ -36,13 +36,12 @@ def _bounded(kw: str) -> str:
     return pat
 
 
-def _domain_patterns(domains: list[TargetDomain]) -> list[tuple[str, re.Pattern[str]]]:
-    out = []
-    for d in domains:
-        kws = [k for k in d.keywords if k]
-        if kws:
-            out.append((d.name, re.compile("|".join(_bounded(k) for k in kws), re.I)))
-    return out
+def _keyword_pattern(keywords: list[str]) -> re.Pattern[str] | None:
+    """One alternation over every keyword of every *picked* role type. Picking a type is therefore worth more
+    than its base weight: its vocabulary also earns the title and description bonus, which is what used to be
+    the separate `target_domains` list."""
+    kws = [k for k in keywords if k]
+    return re.compile("|".join(_bounded(k) for k in kws), re.I) if kws else None
 
 
 FAST_MODELS = ("local", "triage")
@@ -77,8 +76,12 @@ class FastScorer:
     def __init__(self, conn: sqlite3.Connection, profile: Profile):
         self.profile = profile
         self.fs = profile.fast_scoring
-        self.domains = _domain_patterns(profile.target_domains)
-        words = [w.strip() for w in self.fs.negative_title if w.strip()]
+        self.wanted = _keyword_pattern(profile.picked_keywords())
+        # A word cannot be both "this posting is off-target" and "this is what I asked for": a user who picks
+        # Frontend / Web would otherwise take the -30 penalty on every posting they wanted, because the default
+        # negative list was written for a search that excluded frontend. Picks win.
+        picked = set(profile.picked_keywords())
+        words = [w.strip() for w in self.fs.negative_title if w.strip() and w.strip().lower() not in picked]
         self.negative = re.compile("|".join(_bounded(w) for w in words), re.I) if words else None
         sw = [w.strip() for w in self.fs.software_keywords if w.strip()]
         self.software = re.compile("|".join(_bounded(w) for w in sw), re.I) if sw else None
@@ -92,16 +95,13 @@ class FastScorer:
         self.unknown_rep = profile.scoring.unknown_company_reputation
 
     def _hits(self, text: str) -> set[str]:
-        found: set[str] = set()
-        for _, rx in self.domains:
-            found.update(m.group(0).lower() for m in rx.finditer(text))
-        return found
+        return {m.group(0).lower() for m in self.wanted.finditer(text)} if self.wanted else set()
 
     def score(self, row: sqlite3.Row) -> FastResult:
         fs = self.fs
         title = row["title"] or ""
-        role = roletype.classify(title, company=row["company_name"])
-        score = float(fs.role_weights.get(role, fs.role_weights.get("general", 45)))
+        role = roletype.classify(title, company=row["company_name"], profile=self.profile)
+        score = float(self.profile.role_weight(role))
         why: list[str] = []   # the role type is shown as its own badge, so it is not repeated here
 
         title_hits = self._hits(title)

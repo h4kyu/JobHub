@@ -22,7 +22,7 @@ def default_angles(profile: Profile) -> list[str]:
     Each angle is one web-research call (~30-80K tokens), so this is a monthly action, not a daily one."""
     locs = ", ".join(profile.locations) or "anywhere"
     angles = [f"Companies with well-regarded {r} internship/co-op programs for {profile.term} in {locs}, including ones that hire international students"
-              for r in profile.roles]
+              for r in profile.target_role_labels()]
     md = config.load_profile_md()
 
     def section(title: str) -> str:
@@ -43,7 +43,7 @@ def default_angles(profile: Profile) -> list[str]:
 
 
 def _system(profile: Profile) -> str:
-    constraints = {"target_roles": profile.roles, "work_term": profile.term, "locations": profile.locations,
+    constraints = {"target_roles": profile.target_role_labels(), "work_term": profile.term, "locations": profile.locations,
                    "remote_ok": profile.remote_ok, "work_authorization": profile.work_authorization}
     return (config.read_prompt("discover_system.md")
             + "\n\n# Candidate constraints (JSON)\n" + json.dumps(constraints, indent=2)

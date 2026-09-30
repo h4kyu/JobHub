@@ -1,10 +1,22 @@
 # Structured constraints and tuning knobs. Code reads this file; the model reads profile.md.
 # Fill in the placeholders below — everything else has sensible defaults.
 
-roles:                      # target role families (used in prompts and discovery)
-  - "Software Engineering (systems / infrastructure / performance)"
-  - "Machine Learning / AI Infrastructure"
-  - "Robotics / Autonomy Software"
+# What you are targeting. Picked from the shipped catalog in jobhub/rolecatalog.py (the web UI's Profile
+# page is the way to edit this); `weight` is the fast score a posting of that type starts from, before
+# keyword, company and off-target adjustments. A type you neither pick nor exclude scores
+# fast_scoring.neutral_weight, and one you exclude scores fast_scoring.excluded_weight — both are still
+# classified and badged, so nothing disappears from the Jobs chip row. Model-visible as `target_roles`.
+role_types:                 # what you are targeting, best first; picked from jobhub/rolecatalog.py
+  - {key: perf, weight: 90}
+  - {key: compilers, weight: 86}
+  - {key: gpu, weight: 80}
+  - {key: robotics, weight: 78}
+  - {key: systems, weight: 62}
+  - {key: networking, weight: 58}
+  - {key: quant, weight: 55}
+
+excluded_role_types: ["cloud", "data", "database", "frontend", "fullstack", "hardware", "mlresearch", "quantresearch", "silicon"]   # classified and badged as usual, but scored fast_scoring.excluded_weight
+
 degrees: ["bachelor"]       # degrees you hold or are enrolled in: associate | bachelor | master | phd.
                             # The highest one is a ceiling: a posting is hard-rejected only when the LOWEST degree
                             # it accepts is above it, so "Intern, PhD, Quantitative SWE" and "MS/PhD" go while
@@ -105,7 +117,8 @@ fast_scoring:
   unread_to_triage: true    # a posting whose description couldn't be read is never a clear "no" (unless its title is off-target): it goes to triage
   digest_cap: 80            # rows per digest section (Likely / Reach); the web UI always shows everything; 0 = no cap
   triage_weight: 0.7        # final = triage_weight * triage + (1 - triage_weight) * local
-  role_weights: { gpu: 80, quant: 78, perf: 74, robotics: 72, systems: 66, ml: 62, general: 36, hardware: 20 }
+  neutral_weight: 36        # base score for a role type you neither picked nor excluded (the old `general`)
+  excluded_weight: 12       # base score for a type in excluded_role_types
   title_domain_points: 8    # per target_domains keyword in the title (cap title_domain_cap)
   title_domain_cap: 16
   desc_domain_points: 3     # per target_domains keyword in the description head (cap desc_domain_cap)

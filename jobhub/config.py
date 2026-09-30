@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -127,37 +128,43 @@ class LLMConfig(BaseModel):
     weekly_token_budget: int = 0                # optional rolling 7-day ceiling across every recorded run; 0 = off (default)
 
 
-class TargetDomain(BaseModel):
-    """A target field: postings whose title or description mention its keywords score higher in the fast score.
-    Not part of model_visible_constraints, so editing these never triggers re-evaluation."""
-    name: str
-    keywords: list[str] = []
+class RoleTypePick(BaseModel):
+    """One role type the user is targeting, in `profile.yaml: role_types`.
 
+    `key` is either a shipped catalog key (`rolecatalog.CATALOG`) — in which case the label and keywords come
+    from the catalog and only `weight` matters — or a key of the user's own, which must bring its own
+    `keywords`. The list is the answer to "what do you want", and everything downstream derives from it: the
+    fast score's base weight, the keyword bonus, and the `target_roles` the model is shown.
+    """
+    key: str
+    weight: int = 70
+    label: str = ""             # blank -> the catalog's label
+    keywords: list[str] = []    # non-empty -> a custom type; catalog entries leave this empty
 
-DEFAULT_TARGET_DOMAINS = [
-    TargetDomain(name="GPU / accelerators", keywords=[
-        "cuda", "gpu kernel", "tensorrt", "triton", "rocm", "hip", "accelerator", "cudnn", "cutlass",
-        "inference optimization", "quantization", "tensor core"]),
-    TargetDomain(name="Compilers / runtimes", keywords=[
-        "compiler", "llvm", "mlir", "codegen", "code generation", "jit", "intermediate representation",
-        "toolchain", "interpreter", "language runtime", "garbage collect"]),
-    TargetDomain(name="Performance engineering", keywords=[
-        "low latency", "low-latency", "performance optimization", "profiling", "simd", "avx", "vectoriz",
-        "cache-friendly", "cache locality", "throughput", "microarchitecture", "lock-free", "nanosecond",
-        "real-time constraints", "hot path"]),
-    TargetDomain(name="HFT / quant systems", keywords=[
-        "high frequency trading", "high-frequency", "market data", "order book", "matching engine",
-        "trading system", "quantitative developer", "exchange connectivity", "kernel bypass", "fpga trading"]),
-    TargetDomain(name="Systems / infrastructure", keywords=[
-        "distributed system", "consensus", "raft", "paxos", "storage engine", "database internals",
-        "query engine", "operating system", "kernel development", "networking stack", "rpc framework",
-        "concurrency primitives", "scheduler"]),
-]
+    @field_validator("key")
+    @classmethod
+    def _slug(cls, v: str) -> str:
+        v = re.sub(r"[^a-z0-9-]+", "-", str(v).strip().lower()).strip("-")
+        if not v:
+            raise ValueError("a role type needs a key")
+        return v
 
+    @field_validator("weight")
+    @classmethod
+    def _range(cls, v: int) -> int:
+        return max(0, min(100, int(v)))
 
-DEFAULT_ROLE_WEIGHTS: dict[str, int] = {
-    "gpu": 80, "quant": 78, "perf": 74, "robotics": 72, "systems": 66, "ml": 62, "general": 36, "hardware": 20,
-}
+    @field_validator("keywords")
+    @classmethod
+    def _usable(cls, v: list[str]) -> list[str]:
+        """`roletype._alternation` wraps the whole alternation in one boundary pair, so a keyword that does not
+        start and end alphanumeric would silently never match. Drop those rather than assert at page-load time."""
+        return [w for w in (str(x).strip().lower() for x in v) if w and w[:1].isalnum() and w[-1:].isalnum()]
+
+    def resolved_label(self) -> str:
+        from .rolecatalog import BY_KEY
+
+        return self.label or (BY_KEY[self.key].label if self.key in BY_KEY else self.key)
 
 # Plain "this is a programming job" words. The rubric's Likely bucket is mostly generic software internships, and what
 # separates those from the Archive (cyber, medical, analyst, test/repair, "engineering intern") is exactly this.
@@ -182,10 +189,14 @@ class FastScoring(BaseModel):
     """Free, deterministic first-pass scoring (jobhub/fastscore.py). None of this is model-visible, so editing
     it never changes `profile_hash`; `jobhub rescore --recompute-only` re-applies it to stored rows for free."""
     enabled: bool = True
-    role_weights: dict[str, int] = Field(default_factory=lambda: dict(DEFAULT_ROLE_WEIGHTS))  # base score per role type
-    title_domain_points: int = 8           # per distinct target_domains keyword in the title
+    #: Base score for a posting whose role type the user neither picked nor excluded. It is deliberately the old
+    #: `general` weight: not targeting something is not the same as rejecting it, so an unpicked type scores like
+    #: any unremarkable software posting and stays visible in the chip row with an honest badge.
+    neutral_weight: int = 36
+    excluded_weight: int = 12              # base score for a type in `excluded_role_types`
+    title_domain_points: int = 8           # per distinct keyword of a *picked* role type in the title
     title_domain_cap: int = 16
-    desc_domain_points: int = 3            # per distinct target_domains keyword in the description head
+    desc_domain_points: int = 3            # per distinct picked-role-type keyword in the description head
     desc_domain_cap: int = 12
     desc_chars: int = 600                  # how much of the description the local scorer reads
     reputation_weight: float = 0.3         # (company reputation - 50) * this, added to the score
@@ -211,7 +222,14 @@ class SourcesConfig(BaseModel):
 
 
 class Profile(BaseModel):
-    roles: list[str] = []
+    #: What you are targeting, best first: entries picked from `rolecatalog.CATALOG` plus any custom ones.
+    #: This one list replaces the three places "what I want" used to live (the prose `roles`, the
+    #: `fast_scoring.role_weights` numbers and the `target_domains` keyword lists) — see the migration in
+    #: `load_profile`. Model-visible via `target_roles`, so editing it re-scores.
+    role_types: list[RoleTypePick] = []
+    #: Catalog keys you actively do not want. They still classify (the badge stays honest) but score
+    #: `fast_scoring.excluded_weight`, which lands them in Archive.
+    excluded_role_types: list[str] = []
     #: Degrees held or currently being pursued (`associate` / `bachelor` / `master` / `phd`). The highest one
     #: is a ceiling: `jobhub/degree.py` hard-rejects postings whose *lowest* accepted degree is above it, so a
     #: "PhD, Quantitative Software Engineer" goes but a "BS/MS" one stays. Empty list = no degree filtering.
@@ -232,7 +250,41 @@ class Profile(BaseModel):
     llm: LLMConfig = LLMConfig()
     fast_scoring: FastScoring = FastScoring()
     sources: SourcesConfig = SourcesConfig()
-    target_domains: list[TargetDomain] = Field(default_factory=lambda: list(DEFAULT_TARGET_DOMAINS))
+
+    @field_validator("role_types")
+    @classmethod
+    def _one_entry_per_key(cls, v: list[RoleTypePick]) -> list[RoleTypePick]:
+        """Two entries for one key would make the weight depend on dict ordering. Last wins, as in YAML."""
+        by_key = {r.key: r for r in v}
+        return list(by_key.values())
+
+    # ---- what the rest of the code asks a profile about its role types ----
+
+    def picked(self) -> dict[str, RoleTypePick]:
+        return {r.key: r for r in self.role_types}
+
+    def role_weight(self, key: str) -> int:
+        """The fast score's starting point for a posting of this type: your weight if you picked it, a floor if
+        you excluded it, and otherwise neutral — not picking something is not the same as rejecting it."""
+        pick = self.picked().get(key)
+        if pick is not None:
+            return pick.weight
+        if key in self.excluded_role_types:
+            return self.fast_scoring.excluded_weight
+        return self.fast_scoring.neutral_weight
+
+    def picked_keywords(self) -> list[str]:
+        """Every keyword of every picked type — what the title/description bonus is scored against. Only picked
+        types contribute, which is what makes a pick worth more than the base weight alone."""
+        from .rolecatalog import BY_KEY
+
+        out: list[str] = []
+        for r in self.role_types:
+            out += r.keywords or list(BY_KEY[r.key].keywords if r.key in BY_KEY else ())
+        return sorted(set(out))
+
+    def target_role_labels(self) -> list[str]:
+        return [r.resolved_label() for r in self.role_types]
 
     @field_validator("degrees")
     @classmethod
@@ -247,11 +299,40 @@ class Profile(BaseModel):
         return out
 
 
+def _migrate_role_types(data: dict[str, Any]) -> None:
+    """Build `role_types` from a pre-catalog profile, in place.
+
+    Before the catalog, "what I want" was `fast_scoring.role_weights` — eight keys hardcoded to one person's
+    taste. Widening the catalog split some of those (Compilers out of GPU, Databases/Networking/Cloud out of
+    Systems, and so on), so a straight read would drop a split-out type to the neutral weight and silently
+    archive postings that used to score well. Each split-out type therefore inherits its parent's old weight:
+    the migration is score-preserving, and the user re-picks deliberately from the UI afterwards.
+    """
+    from .rolecatalog import GENERAL, SPLIT_FROM
+
+    old = (data.get("fast_scoring") or {}).get("role_weights")
+    if data.get("role_types") is not None or not isinstance(old, dict):
+        return
+    weights = {str(k): int(v) for k, v in old.items()}
+    for new_key, parent in SPLIT_FROM.items():
+        if parent in weights:
+            weights.setdefault(new_key, weights[parent])
+    neutral = weights.pop(GENERAL, None)
+    if neutral is not None:
+        data.setdefault("fast_scoring", {})["neutral_weight"] = neutral
+    # Anything at or below the old "general" score was a way of saying "not this", which now has its own list.
+    floor = neutral if neutral is not None else 36
+    data["excluded_role_types"] = sorted(k for k, w in weights.items() if w <= floor)
+    data["role_types"] = [{"key": k, "weight": w}
+                          for k, w in sorted(weights.items(), key=lambda kv: -kv[1]) if w > floor]
+
+
 @lru_cache(maxsize=1)
 def load_profile() -> Profile:
     data: dict[str, Any] = {}
     if PROFILE_YAML.exists():
         data = yaml.safe_load(PROFILE_YAML.read_text()) or {}
+    _migrate_role_types(data)
     return Profile.model_validate(data)
 
 
@@ -277,7 +358,8 @@ PROFILE_FIELDS: dict[str, tuple[str, bool]] = {
     "remote_ok": ("bool", True),
     "strict_location": ("bool", True),
     "work_authorization": ("list", True),
-    "roles": ("list", True),
+    # `roles` is gone: what you want is `role_types`, edited through set_role_types (a list of mappings, which
+    # the one-line rewriter below cannot express) and shown to the model as derived `target_roles`.
     # Not model-visible: the deterministic filter in jobhub/degree.py is what acts on it, so editing it
     # re-scores nothing. Apply it to jobs already scored with `jobhub rescore --recompute-only`.
     "degrees": ("list", False),
@@ -399,8 +481,83 @@ def set_profile_value(dotted: str, raw: Any) -> Any:
     return value
 
 
+def _replace_block(lines: list[str], key: str, body: list[str]) -> list[str]:
+    """Replace a top-level `key:` and the indented block under it with `body`, appending the key if absent.
+
+    `set_profile_field` rewrites a key to a single line, which cannot express a list of mappings. This is the
+    multi-line counterpart: same idea (comments elsewhere in the file survive, the key's own trailing comment
+    is kept), but the replacement spans lines.
+    """
+    at = next((i for i, l in enumerate(lines) if re.match(rf"^{re.escape(key)}:", l)), None)
+    if at is None:
+        return lines + (["\n"] if lines and lines[-1].strip() else []) + body
+    m = re.match(rf"^{re.escape(key)}:[^#\n]*(#.*)?$", lines[at].rstrip("\n"))
+    if m and m.group(1) and "#" not in body[0]:     # the generated line may carry its own comment already
+        body = [body[0].rstrip("\n") + f"   {m.group(1)}\n"] + body[1:]
+    end = at + 1
+    while end < len(lines) and (not lines[end].strip() or lines[end].startswith((" ", "\t"))):
+        end += 1
+    while end - 1 > at and not lines[end - 1].strip():   # leave the blank line that separates the next section
+        end -= 1
+    return lines[:at] + body + lines[end:]
+
+
+def set_role_types(picks: list[dict[str, Any]], excluded: list[str]) -> Profile:
+    """Rewrite `role_types:` and `excluded_role_types:` in profile.yaml, validate, roll back on failure.
+
+    Written as a block list of flow mappings (`- {key: gpu, weight: 80}`) so one entry is one line: readable
+    by hand, and cheap to regenerate wholesale every time the UI saves.
+    """
+    from .rolecatalog import BY_KEY
+
+    clean: list[RoleTypePick] = []
+    for p in picks:
+        pick = RoleTypePick.model_validate(p)
+        if pick.key not in BY_KEY and not pick.keywords:
+            raise ValueError(f"{pick.key!r} is not in the catalog, so it needs keywords of its own")
+        if pick.key in BY_KEY and not pick.label:
+            pick.label = ""          # keep following the catalog's label rather than freezing today's
+        clean.append(pick)
+    excluded = sorted({re.sub(r"[^a-z0-9-]+", "-", str(e).strip().lower()).strip("-") for e in excluded} - {""}
+                      - {p.key for p in clean})
+
+    body = ["role_types:                 # what you are targeting, best first; picked from jobhub/rolecatalog.py\n"]
+    for p in clean:
+        bits = [f"key: {p.key}", f"weight: {p.weight}"]
+        if p.label:
+            bits.append(f"label: {json.dumps(p.label)}")
+        if p.keywords:
+            bits.append("keywords: [" + ", ".join(json.dumps(k) for k in p.keywords) + "]")
+        body.append("  - {" + ", ".join(bits) + "}\n")
+    if not clean:
+        body = ["role_types: []              # nothing picked yet: every posting scores the neutral weight\n"]
+    body.append("excluded_role_types: [" + ", ".join(json.dumps(e) for e in excluded) + "]"
+                "   # classified and badged as usual, but scored fast_scoring.excluded_weight\n")
+
+    original = PROFILE_YAML.read_text()
+    lines = original.splitlines(keepends=True)
+    lines = _replace_block(lines, "role_types", body[:-1])
+    lines = _replace_block(lines, "excluded_role_types", body[-1:])
+    PROFILE_YAML.write_text("".join(lines))
+    load_profile.cache_clear()
+    try:
+        return load_profile()
+    except Exception:
+        PROFILE_YAML.write_text(original)
+        load_profile.cache_clear()
+        raise
+
+
 def load_profile_md() -> str:
     return PROFILE_MD.read_text() if PROFILE_MD.exists() else ""
+
+
+def save_profile_md(text: str) -> str:
+    """Write profile.md from the UI. It is prose the model reads, not config, so there is nothing to validate —
+    but it is also part of `profile_hash`, so saving it re-scores."""
+    text = str(text).replace("\r\n", "\n").rstrip() + "\n"
+    PROFILE_MD.write_text(text)
+    return text
 
 
 def load_companies_yaml() -> dict[str, Any]:
@@ -414,7 +571,8 @@ def model_visible_constraints(profile: Profile) -> dict[str, Any]:
     retuning them never triggers re-evaluation (see `jobhub rescore`, which recomputes locally)."""
     lw = list(profile.length_weeks) + [None, None]
     return {
-        "target_roles": profile.roles, "work_term": profile.term,
+        # Derived from role_types rather than a separate hand-typed list: one place to say what you want.
+        "target_roles": profile.target_role_labels(), "work_term": profile.term,
         # alt_terms are equally acceptable to the model — the tracks are separated downstream, in code.
         "acceptable_term_labels": [profile.term] + profile.term_also_accept + profile.alt_terms,
         "min_length_weeks": lw[0], "max_length_weeks": lw[1],

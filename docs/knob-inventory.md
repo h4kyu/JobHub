@@ -15,9 +15,12 @@ Written 2026-09-25 from the code as it stands. Nothing here is implemented yet; 
 
 ## The three big findings
 
-1. **"What I want" is stored three separate ways.** `roles` (prose for the model), `target_domains` (keyword lists for the
-   fast score and skills mining) and `fast_scoring.role_weights` (classifier weights in `roletype.py`). A user should pick
-   their interests once, from one catalog, and all three should be derived from that pick.
+1. ~~**"What I want" is stored three separate ways.**~~ **Fixed 2026-09-26.** It was `roles` (prose for the model),
+   `target_domains` (keyword lists for the fast score) and `fast_scoring.role_weights` (classifier weights in
+   `roletype.py`), all three hardcoded to one person's taste. Now there is one catalog (`jobhub/rolecatalog.py`, ~29
+   types over six groups) and one pick list (`profile.yaml: role_types` + `excluded_role_types`), edited on `/profile`;
+   the weights, the keyword bonus and the model's `target_roles` are all derived from it. A type you pick, exclude and
+   neither are three different scores; unpicked types still classify, so the chip row stays honest.
 2. **"How picky should it be" is spread over ~15 knobs and two bucket systems.** `fast_scoring.{hi,lo,likely_min,reach_min,triage_weight}`,
    `llm.triage_min_score`, and the deep-eval gates `buckets.*` all answer one question. It should be one control.
 3. **AI spend is spread over ~12 knobs.** Budgets, batch sizes, concurrency, models and effort levels. It should be one
@@ -43,7 +46,7 @@ Everything else has a default and lives in Advanced or is internal.
 
 | Knob | Verdict | Notes |
 |---|---|---|
-| `roles` | Expose | Multi-select from the shared catalog; also feeds `target_domains` and `role_weights` (see finding 1) |
+| `role_types`, `excluded_role_types` | **Done** | Multi-select from the shipped catalog on `/profile`, with per-type weight, editable keywords, custom types and a "not interested" list |
 | `term`, `term_also_accept`, `alt_terms` | Expose, merge | Three fields for one idea. Make it one list of accepted terms with one marked primary. The primary/alt track split is derived from that |
 | `length_weeks` | Expose | Only the minimum matters to most people; max is Advanced |
 | `locations`, `remote_ok`, `strict_location` | Expose | Locations list, remote toggle, "only these places" toggle |
@@ -57,7 +60,7 @@ Everything else has a default and lives in Advanced or is internal.
 | `location_exclude`, `other` | Advanced | One free-text "hide postings containing..." box |
 | `sponsorship_values` | Internal | Matches an aggregator field |
 | `title_exclude` | Derive | Current defaults bake in this user's scope (no frontend, no consulting). Derive from selected roles; extras go to Advanced |
-| `fast_scoring.negative_title` | Merge with `title_exclude` | Two overlapping lists for the same idea (reject vs penalize) |
+| `fast_scoring.negative_title` | Merge with `title_exclude` | Two overlapping lists for the same idea (reject vs penalize). Partly relieved: a word that is a picked type's keyword is dropped from this list at scoring time |
 
 ### Scoring (deep evaluation only)
 
@@ -82,12 +85,12 @@ Everything else has a default and lives in Advanced or is internal.
 |---|---|---|
 | `enabled` | Remove | Always on; "local only" is covered by the AI help level |
 | `hi`, `lo`, `likely_min`, `reach_min`, `triage_weight` | Expose as one control | A single "How picky?" choice (Only strong matches / Balanced / Show me everything) that sets all five |
-| `role_weights` | Derive | From the roles the user selected (optionally order them by preference) |
+| ~~`role_weights`~~ | **Done** | Replaced by the weight on each `role_types` entry, plus `neutral_weight` / `excluded_weight` |
 | `title_domain_points/cap`, `desc_domain_points/cap`, `desc_chars`, `software_title_bonus`, `software_desc_points/cap`, `negative_title_penalty`, `reputation_weight` | Internal | Calibrated constants (`jobhub score --calibrate` is a maintainer tool) |
 | `software_keywords` | Internal | |
 | `unread_to_triage` | Internal | Correct default; never surface |
 | `digest_cap` | Remove | The UI shows everything; cap the digest in code |
-| `target_domains` | Derive / Advanced | Keyword lists per field. Derive from selected roles; "fields I want to grow into" (skills mining) is an optional Advanced list |
+| ~~`target_domains`~~ | **Done** | Folded into the catalog: a picked type's keywords are the bonus. Only picked types contribute |
 
 ### Sources (`sources.*`)
 
@@ -100,7 +103,7 @@ Everything else has a default and lives in Advanced or is internal.
 
 | Item | Verdict | Notes |
 |---|---|---|
-| `profile/profile.md` | Expose (generated) | Onboarding produces it from a resume; editable as "About me" |
+| `profile/profile.md` | **Editable**; generation pending | Now a textarea on `/profile`. Still to do: produce the first draft from an uploaded resume (onboarding step 6) |
 | `profile/companies.yaml` | Remove | Replaced by the shipped directory plus a per-user watchlist |
 | `profile.yaml` / `profile.md` tracked in git | **Decision needed** | These hold one person's data. For a product, ship `profile.example.*` and gitignore the real files |
 | Profile hash, rubric version (shown in the header of Settings) | Remove from UI | Implementation detail. Replace with "Changing this will re-score your jobs. Apply?" when a model-visible field changes |

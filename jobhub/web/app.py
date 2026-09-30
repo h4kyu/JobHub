@@ -15,7 +15,8 @@ from typing import Any
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, url_for
 
-from .. import applimits, config, db, directory, fastscore, home as homedata, pipeline, prefilter, roletype, watchlist
+from .. import (applimits, config, db, directory, fastscore, home as homedata, pipeline, prefilter, rolecatalog,
+                 roletype, watchlist)
 from ..models import AppStatus, Bucket
 from ..normalize import slugify
 from . import themes
@@ -86,19 +87,22 @@ def _bullets(summary: str | None) -> list[str]:
 
 
 def _row(r) -> dict:
+    profile = config.load_profile()
     d = dict(r)
     d["bullets"] = _bullets(d.get("summary"))
     d["terms"] = db.uj(d.get("terms"), []) or []
-    d.update(_term_badge(config.load_profile(), d.get("title") or "", d["terms"]))
+    d.update(_term_badge(profile, d.get("title") or "", d["terms"]))
     raw0 = db.uj(d.get("raw"), {}) or {}
     m = d.get("model") or ""
     d["src"] = "rules" if m == "prefilter" else "triage" if m == "triage" else "fast" if m == "local" else "deep"
     d["fast"] = raw0.get("fast") or {}
     d["fit_tags"] = raw0.get("fit_tags") or []
     d["gap_tags"] = raw0.get("gap_tags") or []
-    d["role"] = d["fast"].get("role") or roletype.classify(d.get("title") or "", d["fit_tags"], d.get("summary"), d.get("company_name"))
-    d["role_label"] = roletype.LABELS[d["role"]]
+    d["role"] = d["fast"].get("role") or roletype.classify(d.get("title") or "", d["fit_tags"], d.get("summary"),
+                                                          d.get("company_name"), profile=profile)
+    d["role_label"] = roletype.labels(profile).get(d["role"], d["role"])
     d.setdefault("tier", None)
+    d["us_work_auth_warning"] = bool(d.get("us_work_auth_warning"))
     d["sub_scores"] = db.uj(d.get("sub_scores"), {}) or {}
     d["red_flags"] = db.uj(d.get("red_flags"), []) or []
     raw = db.uj(d.get("raw"), {}) or {}
@@ -295,7 +299,7 @@ def jobs():
         term_counts = {t: sum(1 for r in in_bucket if prefilter.in_track(r["track"], t)) for t in ("all", "primary", "alt")}
         rows = [r for r in in_bucket if prefilter.in_track(r["track"], term)]
         # Role chips count within bucket + term, and the other filters narrow further, like the term chips.
-        role_counts = {"all": len(rows), **{k: sum(1 for r in rows if r["role"] == k) for k in roletype.KEYS}}
+        role_counts = {"all": len(rows), **{k: sum(1 for r in rows if r["role"] == k) for k in roletype.keys(profile)}}
         if role != "all":
             rows = [r for r in rows if r["role"] == role]
         if unread:
@@ -310,7 +314,7 @@ def jobs():
         if sort == "newest":
             rows.sort(key=lambda r: (r["posted_at"] or r["first_seen_at"][:10] or ""), reverse=True)
         elif sort == "role":
-            order = {k: i for i, k in enumerate(roletype.KEYS)}
+            order = {k: i for i, k in enumerate(roletype.keys(profile))}
             rows.sort(key=lambda r: (order.get(r["role"], 99), -(r["likelihood"] or 0)))   # role groups, best score first within each
         elif sort == "deadline":
             rows.sort(key=lambda r: (r["deadline"] is None, r["deadline"] or "", -(r["desirability"] or 0)))  # soonest first, unknown last
@@ -322,7 +326,7 @@ def jobs():
     return render_template("jobs.html", rows=rows, bucket=bucket, status=status, term=term, role=role, q=q, unread=unread, sort=sort, watch=watch,
                            src=src, src_counts=src_counts,
                            counts=counts, term_counts=term_counts, term_labels=_term_labels(profile),
-                           role_counts=role_counts, role_labels={"all": "All types", **roletype.LABELS},
+                           role_counts=role_counts, role_labels={"all": "All types", **roletype.labels(profile)},
                            stats=stats, statuses=[s.value for s in AppStatus], tasks=_running_tasks())
 
 
@@ -360,7 +364,7 @@ def companies():
         stats = _stats(conn)
     finally:
         conn.close()
-    tags = [(k, roletype.LABELS.get(k, k), n) for k, n in sorted(directory.tag_counts().items(), key=lambda kv: -kv[1])]
+    tags = [(k, roletype.label(k), n) for k, n in sorted(directory.tag_counts().items(), key=lambda kv: -kv[1])]
     return render_template("companies.html", watched=watched, tags=tags, stats=stats, tasks=_running_tasks())
 
 
@@ -410,7 +414,54 @@ def profile_page():
         fields.append({"key": dotted, "kind": kind, "visible": visible, "value": cur})
     return render_template("profile.html", p=p, fields={f["key"]: f for f in fields},
                            md=config.load_profile_md(), md_path=str(config.PROFILE_MD),
-                           yaml_path=str(config.PROFILE_YAML), stats=stats, tasks=_running_tasks())
+                           yaml_path=str(config.PROFILE_YAML), stats=stats, tasks=_running_tasks(),
+                           **_role_view(p))
+
+
+def _role_view(p: config.Profile) -> dict:
+    """Everything the "What you want" section needs: the user's picks in order, the catalog to add from with
+    the already-used entries marked, and the two weights that define neutral and excluded."""
+    picked = p.picked()
+    return {
+        "picks": [{"key": r.key, "label": r.resolved_label(), "weight": r.weight,
+                   "custom": bool(r.keywords),
+                   "keywords": r.keywords or list(rolecatalog.BY_KEY[r.key].keywords if r.key in rolecatalog.BY_KEY else []),
+                   "blurb": rolecatalog.BY_KEY[r.key].blurb if r.key in rolecatalog.BY_KEY else ""}
+                  for r in sorted(p.role_types, key=lambda r: -r.weight)],
+        "excluded": [{"key": k, "label": rolecatalog.label(k)} for k in p.excluded_role_types],
+        "catalog": [{"group": g, "types": [{"key": t.key, "label": t.label, "blurb": t.blurb,
+                                            "keywords": list(t.keywords),
+                                            "used": t.key in picked or t.key in p.excluded_role_types}
+                                           for t in types]}
+                    for g, types in rolecatalog.by_group()],
+        "neutral_weight": p.fast_scoring.neutral_weight,
+        "excluded_weight": p.fast_scoring.excluded_weight,
+        "default_weight": rolecatalog.DEFAULT_PICK_WEIGHT,
+        "band_hi": p.fast_scoring.hi, "band_lo": p.fast_scoring.lo,
+    }
+
+
+@app.post("/api/roletypes")
+def api_roletypes():
+    """Save the whole "what you want" list at once. It is one decision — picks, weights and exclusions are
+    read together by the scorer — and rewriting the block wholesale avoids a half-applied edit."""
+    data = request.get_json(force=True) or {}
+    try:
+        p = config.set_role_types(list(data.get("picks") or []), list(data.get("excluded") or []))
+    except Exception as e:
+        return jsonify({"error": f"profile.yaml rejected that: {str(e)[:200]}"}), 400
+    return jsonify({"ok": True, "rescore": True, "profile_hash": config.profile_hash(),
+                    "target_roles": p.target_role_labels()})
+
+
+@app.post("/api/profile_md")
+def api_profile_md():
+    """Save the prose the model reads. Part of profile_hash, so this re-scores like any model-visible field."""
+    text = (request.get_json(force=True) or {}).get("text")
+    if not isinstance(text, str):
+        return jsonify({"error": "no text"}), 400
+    config.save_profile_md(text)
+    return jsonify({"ok": True, "rescore": True, "profile_hash": config.profile_hash()})
 
 
 @app.post("/api/profile")
@@ -462,7 +513,7 @@ def settings():
                        ("buckets", "Deep-evaluation bucket gates."),
                        ("llm", "Models, batching, triage and token budgets."),
                        ("sources", "Aggregator repos polled every ingest."),
-                       ("target_domains", "Fields rewarded by the fast score.")):
+                       ):
         sections.append({"name": name, "note": note, "rows": _flatten(name, dump[name])})
     conn = db.connect()
     try:
@@ -509,6 +560,29 @@ def api_status():
     finally:
         conn.close()
     return jsonify({"ok": True})
+
+
+@app.post("/api/company-us-work-auth-warning")
+def api_company_us_work_auth_warning():
+    """Apply a visible caution to every posting from this company; never hides or rejects a posting."""
+    data = request.get_json(force=True)
+    try:
+        job_id = int(data["job_id"])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({"error": "bad job id"}), 400
+    enabled = data.get("enabled")
+    if not isinstance(enabled, bool):
+        return jsonify({"error": "enabled must be true or false"}), 400
+    conn = db.connect()
+    try:
+        if not db.set_company_us_work_auth_warning(conn, job_id, enabled):
+            return jsonify({"error": "no such job"}), 404
+        if data.get("skip"):
+            db.set_status(conn, job_id, "skipped", "U.S. work authorization / export-control concern")
+        conn.commit()
+    finally:
+        conn.close()
+    return jsonify({"ok": True, "enabled": enabled, "skipped": bool(data.get("skip"))})
 
 
 @app.post("/api/sources/<path:repo>/<action>")

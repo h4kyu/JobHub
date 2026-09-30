@@ -99,14 +99,20 @@ def _summarise_profile(profile) -> dict[str, Any]:
     edited = None
     if config.PROFILE_YAML.exists():
         edited = datetime.fromtimestamp(config.PROFILE_YAML.stat().st_mtime).strftime("%-d %b")
+    roles = profile.target_role_labels()
+    excluded = [roletype.label(k) for k in profile.excluded_role_types]
     return {
         "term": terms,
         "alt_term": alt,
         "locations": list(profile.locations),
         "remote_ok": profile.remote_ok,
-        "work_authorization": list(profile.work_authorization),
-        "roles": [roletype.LABELS.get(r, r) for r in profile.roles][:6],
-        "domains": [t.name for t in profile.target_domains][:6],
+        # Parenthetical notes belong on Profile, not in this space-constrained overview.  For example,
+        # "Japan (citizenship held; passport may need renewal)" becomes the still-accurate "Japan" here.
+        "work_authorization": [str(x).split(" (", 1)[0] for x in profile.work_authorization],
+        "roles": roles[:4],
+        "role_count": len(roles),
+        "excluded": excluded,
+        "excluded_count": len(excluded),
         "dealbreakers": n_breakers,
         "edited": edited,
     }

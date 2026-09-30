@@ -13,7 +13,13 @@ def conn(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "DIGESTS_DIR", tmp_path)
     monkeypatch.setattr(config, "LLM_CWD", tmp_path)
-    monkeypatch.setattr(config, "load_profile", lambda: Profile(term="Winter 2027"))
+    # The scorer has no opinion of its own any more: what counts as a target is entirely the profile's picks,
+    # so a test profile has to say what it wants the way a user's does.
+    monkeypatch.setattr(config, "load_profile", lambda: Profile(
+        term="Winter 2027",
+        role_types=[{"key": "gpu", "weight": 80}, {"key": "compilers", "weight": 80}, {"key": "perf", "weight": 74},
+                    {"key": "systems", "weight": 66}, {"key": "ml", "weight": 62}],
+        excluded_role_types=["hardware"]))
     with db.session() as c:
         yield c
 
@@ -142,7 +148,9 @@ def test_recompute_reapplies_thresholds_without_a_model(conn, monkeypatch):
     add_job(conn, 1, "Software Engineer Intern", desc="Python and C++ code.")
     fastscore.run_fast_scoring(conn, None, use_model=False, log=lambda *_: None)
     before = conn.execute("SELECT bucket FROM evaluations WHERE model = 'local'").fetchone()[0]
-    p = Profile(term="Winter 2027")
+    # Only the bands move: role_types is model-visible, so changing the picks here would change profile_hash and
+    # leave the stored row belonging to a profile that no longer exists, which is a different test.
+    p = config.load_profile().model_copy(deep=True)
     p.fast_scoring.reach_min = 99
     p.fast_scoring.likely_min = 100
     monkeypatch.setattr(config, "load_profile", lambda: p)

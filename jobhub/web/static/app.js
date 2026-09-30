@@ -5,6 +5,8 @@ const JobHub = (() => {
     return post("/api/status", {job_id: id, status, notes}).then(res => {
       if (res.error) { alert(res.error); return; }
       if (el) { el.classList.add("changed"); const sel = el.querySelector("select.status"); if (sel) sel.value = status; }
+      const detailSelect = document.querySelector(`#jobstatus[data-id="${id}"]`);
+      if (detailSelect) detailSelect.value = status;
     });
   }
 
@@ -13,15 +15,49 @@ const JobHub = (() => {
   });
   document.addEventListener("click", e => {
     const b = e.target.closest(".quick button");
-    if (b) { const card = b.closest(".jobcard"); setStatus(card.dataset.id, b.dataset.status, null, card); return; }
-    const save = e.target.closest("#savestatus");
-    if (save) {
-      setStatus(save.dataset.id, document.getElementById("jobstatus").value, document.getElementById("jobnotes").value)
-        .then(() => { document.getElementById("saved").textContent = "saved"; });
+    if (b) { const card = b.closest(".jobcard"), id = b.dataset.id || (card && card.dataset.id); setStatus(id, b.dataset.status, null, card); return; }
+    const companyWarning = e.target.closest(".company-warning-toggle, .company-warning-skip");
+    if (companyWarning) {
+      const skip = companyWarning.classList.contains("company-warning-skip");
+      post("/api/company-us-work-auth-warning", {
+        job_id: Number(companyWarning.dataset.id),
+        enabled: skip || companyWarning.dataset.enabled === "true",
+        skip
+      }).then(res => res.error ? alert(res.error) : location.reload());
       return;
     }
     const task = e.target.closest("button.task");
     if (task) { startTask(task.dataset.kind, JSON.parse(task.dataset.args || "{}")); return; }
+  });
+
+  // Job detail: status changes are immediate; notes save after typing pauses (and on blur).
+  const jobNotes = document.getElementById("jobnotes"), jobStatus = document.getElementById("jobstatus"), saved = document.getElementById("saved");
+  if (jobNotes && jobStatus) {
+    let notesTimer = null;
+    const saveNotes = () => {
+      clearTimeout(notesTimer);
+      if (jobNotes.value === jobNotes.defaultValue) return;
+      if (saved) saved.textContent = "saving…";
+      setStatus(jobStatus.dataset.id, jobStatus.value, jobNotes.value).then(() => {
+        jobNotes.defaultValue = jobNotes.value;
+        if (saved) saved.textContent = "saved";
+      });
+    };
+    jobNotes.addEventListener("input", () => { if (saved) saved.textContent = ""; clearTimeout(notesTimer); notesTimer = setTimeout(saveNotes, 650); });
+    jobNotes.addEventListener("blur", saveNotes);
+  }
+
+  // Listing cards navigate as one large target, except where an actual control/link was clicked.
+  const openCard = (card) => { if (card && card.dataset.href) location.href = card.dataset.href; };
+  document.addEventListener("click", e => {
+    const card = e.target.closest(".jobcard[data-href]");
+    if (!card || e.target.closest("a, button, input, select, textarea, label")) return;
+    openCard(card);
+  });
+  document.addEventListener("keydown", e => {
+    const card = e.target.closest && e.target.closest(".jobcard[data-href]");
+    if (!card || e.target !== card || !["Enter", " "].includes(e.key)) return;
+    e.preventDefault(); openCard(card);
   });
 
   // Watchlist page: search the company directory, add a result, remove a followed company.
@@ -117,11 +153,7 @@ const JobHub = (() => {
       el.classList.add("saved"); setTimeout(() => location.reload(), 500);
     });
   };
-  document.addEventListener("click", e => {
-    const b = e.target.closest("button.saveknob");
-    if (b) saveKnob(document.querySelector(`input.knobinput[data-knob="${b.dataset.knob}"]`));
-  });
-  document.addEventListener("change", e => { if (e.target.matches('input.knobinput[type=checkbox]')) saveKnob(e.target); });
+  document.addEventListener("change", e => { if (e.target.matches("input.knobinput")) saveKnob(e.target); });
 
   // Jobs page: the filter drawer stays shut unless something is on, so the header is one row.
   const jfilt = document.querySelector("button.jfilt"), jdrawer = document.getElementById("jdrawer");
@@ -168,6 +200,141 @@ const JobHub = (() => {
       if (r && r.error) { alert(r.error); document.documentElement.dataset.theme = prev; }
     });
   });
+
+  // Profile: the role-type list. Picks, weights and exclusions are one setting, saved together — the scorer
+  // reads them together, and a half-applied edit (weights saved, exclusions not) would score against a state
+  // the user never chose. So everything here is local until Save.
+  const rt = document.getElementById("rt");
+  if (rt) (() => {
+    const picks = document.getElementById("rtpicks"), pick = document.getElementById("rtpick");
+    const apply = document.getElementById("rtapply"), note = document.getElementById("rtnote");
+    const chips = document.getElementById("rtexcluded"), search = document.getElementById("rtsearch");
+    const lo = Number(rt.dataset.lo), dflt = Number(rt.dataset.default);
+    let mode = "pick";              // what the catalog list is currently adding to: a pick or the exclusions
+    const dirty = () => { apply.disabled = false; note.textContent = "Not saved yet."; };
+
+    const mark = () => {            // grey out catalog entries already used, either way
+      const used = new Set([...picks.querySelectorAll(".rtrow")].map(r => r.dataset.key)
+                    .concat([...chips.querySelectorAll(".rtchip")].map(c => c.dataset.key)));
+      pick.querySelectorAll(".rtopt").forEach(o => { o.disabled = used.has(o.dataset.key); });
+      picks.querySelector("p.hint")?.remove();
+      picks.querySelectorAll(".rtrow").forEach(r => {
+        r.classList.toggle("weak", Number(r.querySelector(".rtw").value) <= lo);
+      });
+    };
+
+    const row = ({key, label, weight, keywords, blurb, custom}) => {
+      const el = document.createElement("div");
+      el.className = "rtrow"; el.dataset.key = key; el.dataset.custom = custom ? "1" : "0";
+      el.innerHTML = `<div class="rtmain"><span class="rtname"></span>${blurb ? "<small></small>" : ""}</div>
+        <input class="rtw" type="range" min="0" max="100" step="1"><output class="rtval"></output>
+        <button class="rtkw" type="button">words</button><button class="rtdel" type="button">&times;</button>
+        <div class="rtwords" hidden><input type="text"${custom ? "" : " readonly"}><small></small></div>`;
+      el.querySelector(".rtname").textContent = label;
+      if (custom) el.querySelector(".rtname").insertAdjacentHTML("beforeend", '<span class="rtown">yours</span>');
+      if (blurb) el.querySelector(".rtmain small").textContent = blurb;
+      el.querySelector(".rtw").value = weight; el.querySelector(".rtval").textContent = weight;
+      el.querySelector(".rtwords input").value = (keywords || []).join(", ");
+      el.querySelector(".rtwords small").textContent = custom
+        ? "Comma separated. A word must start and end with a letter or digit."
+        : "From the shipped catalog — add your own type if you need different words.";
+      return el;
+    };
+
+    rt.addEventListener("input", e => {
+      if (!e.target.matches(".rtw, .rtwords input, #rtsearch")) return;
+      if (e.target.matches("#rtsearch")) {
+        const q = e.target.value.trim().toLowerCase();
+        pick.querySelectorAll(".rtopt").forEach(o => {
+          o.hidden = q && !(o.dataset.label + " " + o.dataset.blurb + " " + o.dataset.keywords).toLowerCase().includes(q);
+        });
+        pick.querySelectorAll(".rtgroup").forEach(g => {
+          g.hidden = ![...g.querySelectorAll(".rtopt")].some(o => !o.hidden);
+        });
+        return;
+      }
+      if (e.target.matches(".rtw")) {
+        const r = e.target.closest(".rtrow");
+        r.querySelector(".rtval").textContent = e.target.value;
+        r.classList.toggle("weak", Number(e.target.value) <= lo);
+      }
+      dirty();
+    });
+
+    rt.addEventListener("click", e => {
+      const t = e.target;
+      if (t.closest("#rtopen") || t.closest("#rtexadd")) {
+        mode = t.closest("#rtexadd") ? "exclude" : "pick";
+        pick.hidden = false; search.value = ""; search.dispatchEvent(new Event("input", {bubbles: true}));
+        search.focus();
+        return;
+      }
+      if (t.closest("#rtcustom")) {
+        const label = prompt("What do you want to call it?");
+        if (!label || !label.trim()) return;
+        const key = "my-" + label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+        if (!key.replace(/^my-$/, "") || picks.querySelector(`[data-key="${key}"]`)) return;
+        const el = row({key, label: label.trim(), weight: dflt, keywords: [], blurb: "", custom: true});
+        picks.append(el); el.querySelector(".rtwords").hidden = false;
+        el.querySelector(".rtwords input").focus();
+        mark(); dirty();
+        return;
+      }
+      const opt = t.closest(".rtopt");
+      if (opt) {
+        if (mode === "exclude") {
+          const c = document.createElement("span");
+          c.className = "rtchip"; c.dataset.key = opt.dataset.key;
+          c.textContent = opt.dataset.label;
+          c.insertAdjacentHTML("beforeend", '<button type="button" title="Remove">&times;</button>');
+          chips.append(c);
+        } else {
+          picks.append(row({key: opt.dataset.key, label: opt.dataset.label, weight: dflt, blurb: opt.dataset.blurb,
+                            keywords: opt.dataset.keywords ? opt.dataset.keywords.split(", ") : [], custom: false}));
+        }
+        pick.hidden = true; mark(); dirty();
+        return;
+      }
+      if (t.closest(".rtkw")) { const w = t.closest(".rtrow").querySelector(".rtwords"); w.hidden = !w.hidden; return; }
+      if (t.closest(".rtdel")) { t.closest(".rtrow").remove(); mark(); dirty(); return; }
+      if (t.closest(".rtchip button")) { t.closest(".rtchip").remove(); mark(); dirty(); return; }
+      if (t.closest("#rtapply")) {
+        const body = {
+          picks: [...picks.querySelectorAll(".rtrow")].map(r => {
+            const p = {key: r.dataset.key, weight: Number(r.querySelector(".rtw").value)};
+            if (r.dataset.custom === "1") {
+              p.label = r.querySelector(".rtname").childNodes[0].textContent.trim();
+              p.keywords = r.querySelector(".rtwords input").value.split(",").map(s => s.trim()).filter(Boolean);
+            }
+            return p;
+          }),
+          excluded: [...chips.querySelectorAll(".rtchip")].map(c => c.dataset.key),
+        };
+        apply.disabled = true; note.textContent = "Saving…";
+        post("/api/roletypes", body).then(r => {
+          if (r.error) { apply.disabled = false; note.textContent = r.error; return; }
+          note.textContent = "Saved — re-score to apply it to existing postings.";
+        });
+      }
+    });
+    mark();
+  })();
+
+  // Profile: the prose the model reads. Saved explicitly, not on blur — it is a document being written, and
+  // an autosave mid-sentence would re-score the board on a half-finished thought.
+  const pmd = document.getElementById("pmd"), pmdsave = document.getElementById("pmdsave");
+  if (pmd && pmdsave) {
+    const pmdnote = document.getElementById("pmdnote");
+    pmd.addEventListener("input", () => { pmdsave.disabled = pmd.value === pmd.defaultValue; });
+    pmdsave.addEventListener("click", () => {
+      pmdsave.disabled = true; pmdnote.textContent = "Saving…";
+      post("/api/profile_md", {text: pmd.value}).then(r => {
+        if (r.error) { pmdsave.disabled = false; pmdnote.textContent = r.error; return; }
+        pmd.defaultValue = pmd.value;
+        pmdnote.textContent = "Saved — re-score to apply it to existing postings.";
+      });
+    });
+  }
 
   // Jobs page: tick jobs, then run the full rubric on just those.
   const picked = () => [...document.querySelectorAll("input.pick:checked")].map(c => Number(c.value));

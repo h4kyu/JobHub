@@ -30,7 +30,7 @@ Small hardware startup building a VR touch/hover peripheral.
 - Written-up physics/EE experiments: dipole antenna directivity vs. length (NanoVNA), RLC damping verification, JPEG/DCT quantization sweep scored by SSIM, Nylon 6/10 synthesis and annealing tensile study.
 
 ### Academics
-Term averages 85.3 / 89.5 / 88.1, Excellent Standing throughout. Strongest: discrete math (98), materials chemistry (97), numerical methods (93), digital circuits (91), digital computers (90); algorithms & data structures 82. Currently taking Embedded Microprocessor Systems, Systems Programming & Concurrency, Signals & Systems, Probability & Statistics. No formal ML, CV, OS, networking, or distributed-systems coursework yet; ML/CV is self-taught and project-driven.
+Term averages 85.3 / 89.5 / 88.1, Excellent Standing throughout. Strongest: discrete math (98), materials chemistry (97), numerical methods (93), digital circuits (91), digital computers (90); algorithms & data structures 82. No formal ML, CV, OS, networking, or distributed-systems coursework yet; ML/CV is self-taught and project-driven.
 
 ## Skills
 - **C++ (strong, primary):** C++17/20 daily — Eigen, CMake, performance-aware code, parsers, planners; comfortable in large existing codebases and open-source workflows.
@@ -40,30 +40,73 @@ Term averages 85.3 / 89.5 / 88.1, Excellent Standing throughout. Strongest: disc
 - **ML / CV (applied):** fine-tuning CNNs for regression, dataset construction and self-labelling, edge deployment. Not a research background.
 - **Tooling (solid):** Linux, Git/GitHub Actions, Docker, CMake, manylinux packaging, Protocol Buffers, MQTT, AWS basics.
 - **Hardware/EE (working):** circuits coursework, PCB collaboration, RF basics.
-- **Gaps:** no production web/backend/frontend, SQL at scale, or cloud beyond basics; no Go/Java; no CUDA. No Rust yet, but it's the deliberate next language (close to C++) — treat Rust roles as in-stack with a ramp-up note.
+- **Gaps:** no production web/backend/frontend, SQL at scale, or cloud beyond basics; no Go/Java; no CUDA; no kernel or driver work yet. No Rust yet, but it's the deliberate next language (close to C++) — treat Rust roles as in-stack with a ramp-up note.
 
 ## Desired work
-The through-line is optimization and efficiency: I want to own a narrow, hard technical problem and go all the way down — not coordinate many tools at a surface level. Directions, all genuinely welcome:
+The through-line is optimization and efficiency. I want to own a narrow, hard technical problem and go all the
+way down, not coordinate many tools at a surface level. The directions below are in order of preference. Where I
+name a skills gap, score the gap honestly in level_match rather than marking the whole direction down — these are
+where I want to go, not claims about what I have already done.
 
-**1. Optimization and performance software.** Making things fast and correct at a low level: C++ hot paths, memory and cache behaviour, profiling-driven work, numerical code, real-time and resource-constrained systems. The nitty-gritty — "10× faster, fit this budget, never miss a deadline" — is what I'm drawn to.
-- Quant/HFT roles built on deep C++ are appealing (compensation, prestige, calibre of engineers) and I'd apply. Caveat: pure quant may be a stretch right now, and the domain interests me less than the engineering. Treat deep C++ systems/performance work as the target and quant as one attractive instance of it.
-- GPU/accelerator work — kernels, inference optimization, local and edge non-LLM models — is very interesting but I have no direct GPU experience. Score it as a growth direction with a real skills gap.
+**1. Optimization, performance and parallelism.** Making things fast and correct at a low level: C++ hot paths,
+memory and cache behaviour, SIMD and vectorization, multicore and lock-free work, profiling-driven change,
+numerical code, real-time and resource-constrained systems. "10× faster, fit this budget, never miss a deadline"
+is the work I want, and it is the thing every other direction here is a version of.
 
-**2. Systems and infrastructure software.** Server-side systems where performance and correctness are the product: distributed systems, databases and storage engines, networking, compilers and runtimes, cloud/observability infrastructure. I have no production distributed-systems experience — score the skills gap honestly — but this is deliberate target territory, not "generic backend" to penalize.
+**2. Compilers and runtimes.** Front ends, optimizers, code generation, IRs, JITs, language runtimes and
+toolchains. This is the closest thing to my strengths that I have not yet been paid to do — score it as a target,
+not a stretch.
 
-**3. ML/AI engineering and infrastructure.** Inference and training infrastructure, model/runtime optimization, data and evaluation pipelines, applied ML systems. My ML is applied and project-driven (CNN fine-tuning, TFLite edge deployment, synthetic-data generation at Voxelis). Treat ML infrastructure and applied-ML engineering as real targets; ML *research* expecting publications stays out of scope.
+**3. GPU and accelerators.** Kernels, inference optimization, quantization, accelerator architecture, local and
+edge non-LLM models. A real growth direction with a real gap: I have no direct CUDA or GPU-kernel experience.
 
-**4. Robotics and autonomy — the software side.** Interesting physical problems, and edge inference is where the field is heading. My experience is real here (C++ planning, Isaac Sim pipelines, perception data, a CV model on a Pi). I want to own a core component — planning, control, perception, simulation fidelity, real-time software — not wire ROS packages, CI, and vendor SDKs together. Applied engineering, not research.
+**4. Robotics and autonomy — the software side.** My strongest evidence (C++ planning, Isaac Sim pipelines,
+perception data, a CV model on a Pi), and the domain where my experience actually converts. What I want inside it
+is the low-level software: planning, control, real-time constraints, simulation fidelity, performance. Not wiring
+ROS packages, CI and vendor SDKs together — score integration-heavy robotics postings low even though the domain
+matches.
 
-**Firmware: no longer.** Despite the embedded résumé, I'm moving away from firmware. A role whose core job is bare-metal MCU work — SPI/I2C/UART/CAN buses, RTOS, bootloaders, register-level bring-up — should score very low on work_alignment (≤20) no matter how well my skills match. The embedded background is evidence I can work close to the metal, not a direction to match jobs against. (Robotics/autonomy software that merely touches CAN or sensor buses is fine.)
+**5. Systems close to the metal.** Operating systems, kernel work, device drivers, schedulers, memory management;
+concurrency primitives, threading, memory models and language runtimes. Deliberately *not* distributed systems,
+databases and storage, cloud/DevOps/SRE, or data pipelines — those are out of scope even when a posting files
+them under "systems" or "infrastructure".
 
-**Languages.** C++ and Python are home. Rust is explicitly in-scope — it's close to C++ and I'll ramp up before the term starts; don't penalize Rust-first systems roles for the language. Frontend JavaScript/TypeScript work is out of scope entirely.
+**6. Networking as a performance problem.** Packet paths, kernel bypass, DPDK/eBPF, low-latency transport,
+protocol implementation. Genuinely interesting and I have no relevant experience yet, so this is a growth
+direction with a wide gap. Ordinary network engineering, cloud networking and network operations are not it.
 
-**Reward:** performance, real-time, or resource-constrained requirements; C++- or Rust-first codebases; systems with a clear "correct and fast" definition; an intern owning a component; hardware in the loop (a plus, not required).
-**Avoid (score work_alignment low):** frontend or full-stack product work — anything whose deliverable is UI/JavaScript; classic CRUD product backend with no systems depth; bare-metal firmware (above); mostly integration/glue work; data-labelling or ops; research roles expecting publications. Stacks entirely outside C++/C/Python/Rust are a mild penalty only — judge the work first.
+**7. Quant and HFT — a long shot.** The engineering at trading firms is deep C++ under latency pressure and I
+would take it. But it is a stretch for me right now, so score likelihood conservatively for trading firms rather
+than letting them fill the Likely bucket. Quantitative research, alpha and signal work, and trading-strategy
+roles are not a fit at all, whatever the firm and however the title is dressed up.
+
+**ML and AI, only from underneath.** In scope where the work is really performance or systems — inference
+optimization, GPU kernels, ML compilers, quantization, model serving and the runtime around it. Out of scope
+where the work is the modelling: training pipelines, applied ML, data and evaluation work, and anything pitched
+at candidates with an ML research background. My ML is applied and project-driven (CNN fine-tuning, TFLite edge
+deployment, synthetic data at Voxelis) — enough to work underneath a model, not enough to be hired to build one.
+
+**Firmware: no longer.** Despite the embedded résumé, I'm moving away from firmware. A role whose core job is
+bare-metal MCU work — SPI/I2C/UART/CAN buses, RTOS, bootloaders, register-level bring-up — should score very low
+on work_alignment (≤20) no matter how well my skills match. The embedded background is evidence I can work close
+to the metal, not a direction to match jobs against. (Robotics or systems work that merely touches CAN or sensor
+buses is fine.) The same goes for silicon: RTL, verification and EDA are not what I want.
+
+**Languages.** C++ and Python are home. Rust is explicitly in-scope — it's close to C++ and I'll ramp up before
+the term starts; don't penalize Rust-first systems roles for the language. Frontend JavaScript/TypeScript work is
+out of scope entirely.
+
+**Reward:** performance, real-time or resource-constrained requirements; C++- or Rust-first codebases; systems
+with a clear "correct and fast" definition; an intern owning a component; hardware in the loop (a plus, not
+required).
+**Avoid (score work_alignment low):** frontend or full-stack product work — anything whose deliverable is
+UI/JavaScript; CRUD product backend and SQL-centred application work with no systems depth; cloud, DevOps and SRE
+positions; data engineering and analytics; bare-metal firmware and RTL (above); mostly integration or glue work;
+data-labelling or ops; research roles expecting publications. Stacks entirely outside C++/C/Python/Rust are a
+mild penalty only — judge the work first.
 
 ## What a great internship looks like
-- One or two meaty problems for the term that ship or get used, near senior engineers who are strong in exactly that thing (performance, controls, embedded, GPU).
+- One or two meaty problems for the term that ship or get used, near senior engineers who are strong in exactly that thing (performance, compilers, GPU, controls).
 - **Brand matters in its own right** — for what it signals, the doors it opens, and the people there. Don't push big or prestigious companies down on the assumption their work is shallower; name and depth conflicting is a genuine trade-off, not a rule either way.
 - Hardware or physics in the loop is a plus, not a requirement.
 - "Research intern" postings only if the work is clearly building systems rather than publishing.

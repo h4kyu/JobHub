@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS companies (
     ats_type TEXT,              -- greenhouse | lever | ashby | workday | other
     ats_token TEXT,
     careers_url TEXT,
+    us_work_auth_warning INTEGER NOT NULL DEFAULT 0,
     source TEXT NOT NULL,       -- manual | discover | seen_in_jobs
     status TEXT NOT NULL,       -- approved | proposed | rejected | paused
     created_at TEXT NOT NULL,
@@ -124,6 +125,7 @@ CREATE TABLE IF NOT EXISTS runs (
 """
 
 _MIGRATIONS = [
+    "ALTER TABLE companies ADD COLUMN us_work_auth_warning INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE jobs ADD COLUMN deadline TEXT",
     "ALTER TABLE runs ADD COLUMN llm_input_tokens INTEGER DEFAULT 0",
     "ALTER TABLE runs ADD COLUMN llm_output_tokens INTEGER DEFAULT 0",
@@ -237,6 +239,35 @@ def list_companies(conn: sqlite3.Connection, status: str | None = None) -> list[
 def set_company_status(conn: sqlite3.Connection, slug: str, status: str) -> bool:
     cur = conn.execute("UPDATE companies SET status = ?, updated_at = ? WHERE slug = ?", (status, now(), slug))
     return cur.rowcount > 0
+
+
+def set_company_us_work_auth_warning(conn: sqlite3.Connection, job_id: int, enabled: bool) -> bool:
+    """Set a persistent company-level caution and attach all matching jobs to that company.
+
+    Some list sources create jobs before the company exists in the directory.  Creating the company here and
+    linking same-slug jobs makes the flag apply immediately to old rows; future ingest runs use the same company
+    row through their normal slug lookup.
+    """
+    job = get_job(conn, job_id)
+    if job is None:
+        return False
+    from .normalize import slugify
+
+    slug = slugify(job["company_name"])
+    company = get_company_by_slug(conn, slug)
+    if company is None:
+        company_id = upsert_company(conn, slug=slug, name=job["company_name"], source="seen_in_jobs", status="proposed")
+    else:
+        company_id = int(company["id"])
+    conn.execute(
+        "UPDATE companies SET us_work_auth_warning = ?, updated_at = ? WHERE id = ?",
+        (int(enabled), now(), company_id),
+    )
+    # Match through the same normalized key ingest uses, rather than trusting spelling/case to be identical.
+    for row in conn.execute("SELECT id, company_name FROM jobs WHERE company_id IS NULL OR company_id != ?", (company_id,)):
+        if slugify(row["company_name"]) == slug:
+            conn.execute("UPDATE jobs SET company_id = ? WHERE id = ?", (company_id, row["id"]))
+    return True
 
 
 def company_reputation(conn: sqlite3.Connection, company_id: int | None, default: int) -> int:
@@ -385,7 +416,8 @@ def latest_evaluations(conn: sqlite3.Connection, rubric_version: str, profile_ha
     """Latest evaluation per job for the current rubric/profile, joined with job + application status."""
     sql = """
         SELECT e.*, j.company_name, j.title, j.location, j.canonical_url, j.company_id, j.posted_at, j.deadline,
-               j.first_seen_at, j.active, j.terms, COALESCE(a.status, 'new') AS app_status, a.notes AS app_notes, c.tier AS tier
+               j.first_seen_at, j.active, j.terms, COALESCE(a.status, 'new') AS app_status, a.notes AS app_notes,
+               c.tier AS tier, COALESCE(c.us_work_auth_warning, 0) AS us_work_auth_warning
         FROM evaluations e
         JOIN jobs j ON j.id = e.job_id
         LEFT JOIN applications a ON a.job_id = j.id

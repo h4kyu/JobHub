@@ -161,9 +161,10 @@ def yaml_profile(tmp_path, monkeypatch):
     from jobhub import config as cfg
     f = tmp_path / "profile.yaml"
     f.write_text(
-        'roles:                      # target role families\n'
-        '  - "Systems"\n'
-        '  - "ML"\n'
+        'role_types:                 # target role families\n'
+        '  - {key: systems, weight: 66}\n'
+        '  - {key: ml, weight: 62}\n'
+        'excluded_role_types: ["hardware"]\n'
         'term: "Winter 2027"         # target work term\n'
         'term_also_accept: ["Spring 2027"]   # same window\n'
         'locations:\n'
@@ -213,6 +214,57 @@ def test_bool_and_csv_coercion(yaml_profile):
     assert config.set_profile_field("work_authorization", "Canada, Japan") == ["Canada", "Japan"]
     p = config.load_profile()
     assert p.remote_ok is False and p.work_authorization == ["Canada", "Japan"]
+
+
+# ---------------------------------------------------------------- role types
+
+def test_role_types_replace_the_whole_block(yaml_profile):
+    p = config.set_role_types([{"key": "gpu", "weight": 80}, {"key": "robotics", "weight": 71}], ["frontend"])
+    text = yaml_profile.read_text()
+    assert [(r.key, r.weight) for r in p.role_types] == [("gpu", 80), ("robotics", 71)]
+    assert p.excluded_role_types == ["frontend"]
+    starts = [l.split(":")[0] for l in text.splitlines() if l[:1].isalpha()]
+    assert starts.count("role_types") == 1 and starts.count("excluded_role_types") == 1
+    assert "key: systems" not in text and "hardware" not in text   # the old block really went away
+    assert "# target work term" in text                            # a comment elsewhere survived
+    assert config.load_profile().term == "Winter 2027"             # and so did the rest of the file
+
+
+def test_a_custom_type_round_trips_with_its_keywords(yaml_profile):
+    config.set_role_types([{"key": "my-photonics", "label": "Photonics", "weight": 90,
+                            "keywords": ["photonic", "waveguide"]}], [])
+    r = config.load_profile().role_types[0]
+    assert (r.key, r.resolved_label(), r.keywords) == ("my-photonics", "Photonics", ["photonic", "waveguide"])
+
+
+def test_a_type_cannot_be_both_wanted_and_excluded(yaml_profile):
+    p = config.set_role_types([{"key": "gpu", "weight": 80}], ["gpu", "frontend"])
+    assert p.excluded_role_types == ["frontend"]   # picking it wins; the scorer would otherwise contradict itself
+
+
+def test_an_unknown_key_without_keywords_is_refused_and_rolls_back(yaml_profile):
+    before = yaml_profile.read_text()
+    with pytest.raises(ValueError, match="keywords"):
+        config.set_role_types([{"key": "made-up", "weight": 70}], [])
+    assert yaml_profile.read_text() == before
+
+
+def test_picks_reach_the_model_and_the_scorer_from_one_place(yaml_profile):
+    config.set_role_types([{"key": "gpu", "weight": 80}], ["frontend"])
+    p = config.load_profile()
+    assert config.model_visible_constraints(p)["target_roles"] == ["GPU / Accelerators"]
+    assert p.role_weight("gpu") == 80 and p.role_weight("frontend") == p.fast_scoring.excluded_weight
+
+
+def test_saving_the_prose_changes_the_profile_hash(tmp_path, monkeypatch, yaml_profile):
+    from jobhub import config as cfg
+    md = tmp_path / "profile.md"
+    md.write_text("# Profile\n\n## Desired work\nSystems.\n")
+    monkeypatch.setattr(cfg, "PROFILE_MD", md)
+    before = cfg.profile_hash()
+    cfg.save_profile_md("# Profile\r\n\r\n## Desired work\r\nGPU kernels.")
+    assert md.read_text() == "# Profile\n\n## Desired work\nGPU kernels.\n"   # CRLF normalised, one trailing newline
+    assert cfg.profile_hash() != before
 
 
 def test_unknown_field_is_refused(yaml_profile):

@@ -45,9 +45,28 @@ when testing. `jobhub smoke` is the cheap sanity check.
   YAML the model sees; `config.profile_hash()` hashes only that plus `profile.md`. Consequence: editing weights or
   thresholds never triggers re-evaluation (`jobhub rescore --recompute-only` re-buckets locally); editing constraints
   or the prose does. Changing `prompts/` or `schemas/` requires bumping `RUBRIC_VERSION` in `jobhub/config.py`.
+- **Role types are one list, picked from a shipped catalog** (`jobhub/rolecatalog.py`, added 2026-09-26). "What I
+  want" used to live in three places — the prose `roles`, the `fast_scoring.role_weights` numbers and the
+  `target_domains` keyword lists — all three hardcoded to one person's taste, so another user wanting frontend work
+  had no bucket for it *and* took a −30 title penalty. Now the catalog ships ~29 types across six groups (broad on
+  purpose: frontend, security, data science, game dev, comp-bio…) and `profile.yaml: role_types` is the user's pick
+  list (`{key, weight}`, or `{key, label, keywords}` for one of their own). Everything derives from it:
+  `Profile.role_weight()` (the fast score's base), `Profile.picked_keywords()` (the title/description bonus — only
+  *picked* types lend keywords, which is what makes a pick worth more than its weight) and `target_roles` in
+  `model_visible_constraints`. **Three states, not two:** picked → your weight; `excluded_role_types` →
+  `fast_scoring.excluded_weight` (12, archives it); anything else → `fast_scoring.neutral_weight` (36, the old
+  `general`). Unpicked types still *classify*, so the Jobs chip row keeps an honest badge — not targeting something
+  is not the same as rejecting it. A picked keyword is also removed from `negative_title`, or picking Frontend would
+  penalize the postings you asked for. Catalog **order is tie-break order** and the original eight keys keep their
+  relative order (`directory/board_directory.csv` tags 740 companies with them; `tests/test_rolecatalog.py` pins it).
+  `config._migrate_role_types` rebuilds picks from an old `role_weights` and gives each split-out type its parent's
+  weight (Compilers←GPU, Databases/Networking/Cloud/Data←Systems, CV←ML, Silicon←Hardware) so widening the catalog
+  re-scored nothing. `role_types` is model-visible, so editing it re-scores; edited on `/profile`, written by
+  `config.set_role_types` (a block list of flow mappings, via `_replace_block` — `set_profile_field` writes one line
+  and cannot express a list of mappings).
 - **Fast scoring (default flow, `jobhub/fastscore.py`).** Every posting gets a free deterministic 0-100 score from
-  role type (`roletype.classify`), `target_domains` and software keywords in the title / first 600 chars, company
-  reputation and title red flags; all weights are `profile.yaml: fast_scoring`. The score has three bands: `<= lo`
+  role type (`roletype.classify`), the picked types' keywords and software keywords in the title / first 600 chars,
+  company reputation and title red flags; all weights are `profile.yaml: fast_scoring`. The score has three bands: `<= lo`
   clear no, `>= hi` clear yes, between is *ambiguous*. Only the ambiguous band goes to Haiku triage
   (`run_triage`, title + ~500 chars), final = `triage_weight*triage + (1-triage_weight)*local`, bucketed by
   `likely_min` / `reach_min`. Rows are ordinary `evaluations` rows with `model='local'` or `'triage'`; the score is stored
@@ -200,12 +219,14 @@ when testing. `jobhub smoke` is the cheap sanity check.
   keychain auth); the subprocess runs in `data/llm_cwd` so no CLAUDE.md is auto-loaded; `CLAUDECODE` is stripped from
   the env so it works when launched from inside a Claude Code session.
 
-- **Role types** (`jobhub/roletype.py`): the Role type chip row (`?role=quant|gpu|robotics|perf|ml|systems|hardware|general`)
-  and card badge. The rubric has no category field, so this is a free, deterministic classifier computed per page
-  load from stored data: a known trading firm (`QUANT_FIRMS`) is always quant; otherwise the title decides when it
-  matches anything (ties go to the earlier, more specific type); only a title with no hits falls back to
-  `fit_tags` + summary. Descriptions are skipped (they mention everything, and are slow to scan). Tune keywords
-  freely: nothing is re-evaluated.
+- **Role types** (`jobhub/roletype.py`): the Role type chip row (`?role=<catalog key>`) and card badge. The rubric has
+  no category field, so this is a free, deterministic classifier computed per page load from stored data: a known
+  trading firm (`QUANT_FIRMS`) is always quant; otherwise the title decides when it matches anything (ties go to the
+  earlier, more specific type — custom types first, then catalog order); only a title with no hits falls back to
+  `fit_tags` + summary. Descriptions are skipped (they mention everything, and are slow to scan). The types come from
+  `rolecatalog.ALL` plus the profile's custom ones, so `classify` / `labels` / `keys` all take a `profile`; the
+  compiled alternations are cached on the custom types alone. Editing a keyword re-classifies but re-evaluates
+  nothing.
 - **Application limits** (`jobhub/applimits.py`): companies that cap applications ("limited to three (3)
   applications within a 30-day period") get a `max N apps · K used` badge on cards and job pages, warn-coloured
   once your applied/interview/rejected/offer count reaches N; the tooltip is the exact sentence. Regex over
@@ -223,8 +244,12 @@ when testing. `jobhub smoke` is the cheap sanity check.
   (`.erail`/`.est`) over a two-column body with the live log parked sticky on the right (`.elog`).
   **Class-name trap:** the pipeline's blocker rows are `.blocker`, *not* `.limit` — `.badge.limit` on job cards
   would otherwise inherit its 10px padding and render a head taller than its neighbours.
-- **Profile vs Settings.** `/profile` edits the constraints that decide what gets scored; `/settings` holds the theme
-  picker, the non-model-visible knobs and the read-only dump. Editable constraints are whitelisted in
+- **Profile vs Settings.** `/profile` edits the constraints that decide what gets scored — including the role-type
+  picker (weights, keywords, "not interested") and `profile.md` in a textarea, so nothing about "what I want"
+  needs a file editor any more. `/settings` holds the theme picker, the non-model-visible knobs and the read-only
+  dump. The role list and the prose each save explicitly (one button, whole list at once — picks, weights and
+  exclusions are read together by the scorer, and a half-applied edit would score against a state nobody chose);
+  every other field still saves on blur. Editable constraints are whitelisted in
   `config.PROFILE_FIELDS` (`{dotted: (kind, model_visible)}`) and written by `config.set_profile_field`, which
   rewrites one key in place keeping comments, collapses block lists to flow style so a replaced list cannot survive
   as stray `- ` entries, and rolls the file back if the result fails validation. Fields flagged model-visible change
